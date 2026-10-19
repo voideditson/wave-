@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Shape Siege Ultimate</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Teko:wght@500;700&display=swap');
+    * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Teko', sans-serif; user-select: none; }
+    body { background: #020617; color: #FFF; overflow: hidden; }
+    canvas { display: block; }
+    .hidden { display: none !important; }
+    .shake { animation: shake 0.3s cubic-bezier(.36,.07,.19,.97) both; }
+    @keyframes shake { 10%, 90% { transform: translate3d(-4px, 4px, 0); } 20%, 80% { transform: translate3d(6px, -6px, 0); } 30%, 50%, 70% { transform: translate3d(-8px, 8px, 0); } }
+
+    .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: rgba(2,6,23,0.9); z-index: 100; backdrop-filter: blur(5px); }
+    .panel { background: rgba(15, 23, 42, 0.95); border: 2px solid #38BDF8; padding: 2rem; border-radius: 1rem; text-align: center; max-width: 500px; width: 90%; }
+    h1 { font-size: 4rem; color: #38BDF8; line-height: 1; margin-bottom: 1rem; text-shadow: 0 0 10px rgba(56,189,248,0.5); }
+    input { width: 100%; padding: 1rem; font-size: 1.5rem; text-align: center; border-radius: 0.5rem; border: none; outline: none; margin-bottom: 1rem; background: #1E293B; color: white; }
+    .btn { background: #38BDF8; color: #0F172A; border: none; padding: 1rem; font-size: 1.5rem; font-weight: bold; border-radius: 0.5rem; cursor: pointer; transition: 0.2s; width: 100%; }
+    .btn:hover { background: #7DD3FC; transform: scale(1.02); }
+
+    #hud { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
+    .team-ui { position: absolute; top: 1rem; left: 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
+    .team-member { background: rgba(15, 23, 42, 0.8); padding: 0.5rem 1rem; border-radius: 0.5rem; border-left: 4px solid #38BDF8; width: 250px; }
+    .tm-name { font-size: 1.2rem; font-weight: bold; display: flex; justify-content: space-between; }
+    .tm-bar-bg { background: #334155; height: 10px; border-radius: 5px; margin-top: 5px; overflow: hidden; }
+    .tm-hp { background: #10B981; height: 100%; transition: 0.2s; }
+    .knocked-text { color: #EF4444; }
+
+    .wave-ui { position: absolute; top: 1rem; left: 50%; transform: translateX(-50%); background: rgba(15,23,42,0.8); padding: 0.5rem 2rem; border-radius: 0.5rem; border-bottom: 4px solid #F59E0B; }
+    .wave-ui h2 { font-size: 2.5rem; margin: 0; color: #F59E0B; }
+    #minimap { position: absolute; top: 1rem; right: 1rem; width: 200px; height: 200px; background: rgba(15,23,42,0.8); border: 2px solid #334155; border-radius: 0.5rem; }
+    
+    .spectate-ui { position: absolute; bottom: 6rem; left: 50%; transform: translateX(-50%); display: flex; gap: 1rem; pointer-events: auto; align-items: center; }
+    .spec-btn { background: #1E293B; border: 2px solid #38BDF8; color: #38BDF8; padding: 0.5rem 1rem; cursor: pointer; border-radius: 0.5rem; font-size: 1.5rem; }
+
+    .stamina-container { position: absolute; bottom: 2rem; left: 50%; transform: translateX(-50%); width: 300px; text-align: center; }
+    .bar-bg { background: #334155; height: 12px; border-radius: 6px; overflow: hidden; border: 2px solid #0F172A; }
+    #stam-bar { background: #38BDF8; height: 100%; transition: width 0.1s; }
+
+    .cards-container { display: flex; gap: 1rem; justify-content: center; margin-top: 2rem; }
+    .upgrade-card { background: #1E293B; border: 2px solid #38BDF8; padding: 1.5rem; border-radius: 0.5rem; cursor: pointer; width: 200px; pointer-events: auto; }
+    .upgrade-card:hover { transform: translateY(-10px); background: #334155; }
+    .uc-title { font-size: 1.8rem; color: #38BDF8; }
+  </style>
+</head>
+<body>
+
+  <div class="overlay" id="menu">
+    <div class="panel">
+      <h1>SHAPE SIEGE</h1>
+      <input type="text" id="username" placeholder="Enter Name" maxlength="10">
+      <div style="display:flex; gap:1rem;">
+        <input type="text" id="roomCode" placeholder="Room Code" style="text-transform:uppercase">
+        <button class="btn" onclick="joinRoom()">JOIN</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay hidden" id="lobby">
+    <div class="panel">
+      <h1>LOBBY: <span id="displayRoom" style="color:#F59E0B"></span></h1>
+      <div id="lobbyPlayers" style="font-size:1.5rem; margin-bottom:1rem; text-align:left;"></div>
+      <button class="btn hidden" id="startBtn" onclick="startGame()">START SIEGE</button>
+    </div>
+  </div>
+
+  <div class="overlay hidden" id="cardOverlay">
+    <div style="text-align:center;">
+      <h1 style="color:#F59E0B">WAVE CLEARED! CHOOSE UPGRADE</h1>
+      <div class="cards-container" id="cardsBox"></div>
+    </div>
+  </div>
+
+  <div class="overlay hidden" id="gameOver">
+    <div class="panel">
+      <h1 style="color:#EF4444">SQUAD ELIMINATED</h1>
+      <p style="font-size:2rem; margin-bottom:1rem;">Survived until Wave: <span id="finalWave" style="color:#F59E0B"></span></p>
+      <button class="btn hidden" id="playAgainBtn" onclick="startGame()">PLAY AGAIN</button>
+    </div>
+  </div>
+
+  <div id="hud" class="hidden">
+    <div class="team-ui" id="teamUI"></div>
+    <div class="wave-ui"><h2>WAVE <span id="waveDisp">1</span></h2></div>
+    <canvas id="minimap" width="200" height="200"></canvas>
+    
+    <div class="stamina-container">
+      <h3 style="color:#38BDF8; margin-bottom:0.2rem; letter-spacing:2px;">STAMINA</h3>
+      <div class="bar-bg"><div id="stam-bar" style="width:100%"></div></div>
+      <div style="margin-top:0.5rem; color:#94A3B8; font-family:sans-serif; font-size:0.8rem; font-weight:bold;">SHIFT: SPRINT | SPACE: DASH</div>
+    </div>
+
+    <div class="spectate-ui hidden" id="spectateUI">
+      <button class="spec-btn" onclick="cycleSpectate(-1)">&#9664;</button>
+      <div style="font-size: 2rem; font-weight: bold; background: rgba(0,0,0,0.5); padding: 0 1rem; border-radius: 0.5rem;" id="specName">Spectating...</div>
+      <button class="spec-btn" onclick="cycleSpectate(1)">&#9654;</button>
+    </div>
+  </div>
+
+  <canvas id="canvas"></canvas>
+
+  <script>
+    const socket = io();
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const minimap = document.getElementById('minimap');
+    const mCtx = minimap.getContext('2d');
+
+    let myId = null, roomId = null, isHost = false, worldSize = 6000;
+    let mapObstacles = [], state = { players: {}, enemies: [], bullets: [] };
+    let floatingTexts = [], trails = [];
+    let keys = { w:false, a:false, s:false, d:false, shift:false, ' ':false };
+    let mouse = { x: window.innerWidth/2, y: window.innerHeight/2, down: false };
+    let spectatingId = null, spectateIndex = 0;
+
+    window.addEventListener('resize', () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; });
+    window.dispatchEvent(new Event('resize'));
+
+    function joinRoom() {
+      roomId = document.getElementById('roomCode').value.toUpperCase() || Math.random().toString(36).substr(2, 4).toUpperCase();
+      socket.emit('joinRoom', { roomId, username: document.getElementById('username').value || 'Ghost' });
+      document.getElementById('menu').classList.add('hidden');
+      document.getElementById('lobby').classList.remove('hidden');
+      document.getElementById('displayRoom').innerText = roomId;
+    }
+
+    function startGame() { socket.emit('startGame', roomId); }
+
+    socket.on('updateLobby', (players) => {
+      const p = players.find(p => p.id === socket.id);
+      if (p) { myId = p.id; isHost = p.isHost; }
+      if (isHost) { document.getElementById('startBtn').classList.remove('hidden'); document.getElementById('playAgainBtn').classList.remove('hidden'); }
+      document.getElementById('lobbyPlayers').innerHTML = players.map(p => `<div>${p.isHost ? '👑' : '👤'} ${p.name}</div>`).join('');
+    });
+
+    socket.on('gameStarted', (data) => {
+      mapObstacles = data.map; worldSize = data.worldSize;
+      document.getElementById('lobby').classList.add('hidden'); document.getElementById('gameOver').classList.add('hidden');
+      document.getElementById('hud').classList.remove('hidden'); spectatingId = null;
+    });
+
+    socket.on('gameState', (data) => { state = data; updateUI(); });
+    socket.on('waveAdvanced', (w) => document.getElementById('waveDisp').innerText = w);
+    socket.on('resumeWave', (w) => { document.getElementById('cardOverlay').classList.add('hidden'); document.getElementById('waveDisp').innerText = w; });
+    
+    socket.on('showCards', (cards) => {
+      document.getElementById('cardsBox').innerHTML = cards.map(c => `
+        <div class="upgrade-card" onclick="socket.emit('selectCard', { roomId: '${roomId}', cardId: '${c.id}' }); document.getElementById('cardOverlay').classList.add('hidden');">
+          <div class="uc-title">${c.name}</div><div style="font-size:1.2rem; color:#94A3B8;">${c.desc}</div>
+        </div>`).join('');
+      document.getElementById('cardOverlay').classList.remove('hidden');
+    });
+
+    socket.on('gameOver', (w) => { document.getElementById('gameOver').classList.remove('hidden'); document.getElementById('finalWave').innerText = w; });
+    socket.on('screenShake', () => { document.body.classList.add('shake'); setTimeout(() => document.body.classList.remove('shake'), 300); });
+    socket.on('floatingText', (t) => floatingTexts.push({ x: t.x, y: t.y, text: t.text, color: t.color, life: 40, vy: -1.5 }));
+
+    window.addEventListener('keydown', e => { if(keys.hasOwnProperty(e.key.toLowerCase())) keys[e.key.toLowerCase()] = true; });
+    window.addEventListener('keyup', e => { if(keys.hasOwnProperty(e.key.toLowerCase())) keys[e.key.toLowerCase()] = false; });
+    window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+    window.addEventListener('mousedown', () => mouse.down = true);
+    window.addEventListener('mouseup', () => mouse.down = false);
+
+    setInterval(() => {
+      if (!roomId || document.getElementById('hud').classList.contains('hidden')) return;
+      let dx = 0, dy = 0;
+      if (keys.w) dy -= 1; if (keys.s) dy += 1;
+      if (keys.a) dx -= 1; if (keys.d) dx += 1;
+      const angle = Math.atan2(mouse.y - canvas.height/2, mouse.x - canvas.width/2);
+      socket.emit('playerInput', { roomId, dx, dy, angle, isShooting: mouse.down, isSprinting: keys.shift, isDashing: keys[' '] });
+    }, 1000 / 30);
+
+    function cycleSpectate(dir) {
+      const alive = Object.values(state.players).filter(p => !p.dead);
+      if (alive.length === 0) return;
+      spectateIndex = (spectateIndex + dir + alive.length) % alive.length;
+      spectatingId = alive[spectateIndex].id;
+    }
+
+    function updateUI() {
+      const me = state.players[myId];
+      if (!me) return;
+
+      const specUI = document.getElementById('spectateUI');
+      if (me.dead) {
+        specUI.classList.remove('hidden');
+        if (!spectatingId || !state.players[spectatingId] || state.players[spectatingId].dead) cycleSpectate(1);
+        if (state.players[spectatingId]) document.getElementById('specName').innerText = "Spectating: " + state.players[spectatingId].name;
+      } else { specUI.classList.add('hidden'); spectatingId = myId; }
+
+      document.getElementById('teamUI').innerHTML = Object.values(state.players).map(p => {
+        const hpPct = (p.hp / p.maxHp) * 100;
+        let status = '';
+        if (p.dead) status = '<span class="knocked-text">DEAD</span>';
+        else if (p.knocked) status = `<span class="knocked-text">KNOCKED (${Math.ceil(p.deathTimer/30)}s)</span>`;
+        return `
+          <div class="team-member">
+            <div class="tm-name"><span>${p.name}</span> ${status}</div>
+            <div class="tm-bar-bg"><div class="tm-hp" style="width:${hpPct}%; background:${p.knocked ? '#EF4444' : '#10B981'}"></div></div>
+            ${p.knocked && p.reviveProgress > 0 ? `<div style="height:4px; background:#38BDF8; width:${p.reviveProgress}%; margin-top:2px;"></div>` : ''}
+          </div>`;
+      }).join('');
+
+      document.getElementById('stam-bar').style.width = `${(me.stamina / me.maxStamina) * 100}%`;
+
+      mCtx.clearRect(0, 0, 200, 200);
+      const s = 200 / worldSize;
+      mCtx.fillStyle = 'rgba(56,189,248,0.2)'; mapObstacles.forEach(o => mCtx.fillRect(o.x*s, o.y*s, o.w*s, o.h*s));
+      state.enemies.forEach(e => { mCtx.fillStyle = '#EF4444'; mCtx.beginPath(); mCtx.arc(e.x*s, e.y*s, 2, 0, Math.PI*2); mCtx.fill(); });
+      Object.values(state.players).forEach(p => {
+        if(p.dead) return;
+        mCtx.fillStyle = p.id === myId ? '#FFF' : '#10B981';
+        mCtx.beginPath(); mCtx.arc(p.x*s, p.y*s, 3, 0, Math.PI*2); mCtx.fill();
+      });
+    }
+
+    function render() {
+      ctx.fillStyle = '#020617'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      const target = state.players[spectatingId] || state.players[myId];
+      if (!target) { requestAnimationFrame(render); return; }
+
+      const camX = target.x - canvas.width / 2, camY = target.y - canvas.height / 2;
+
+      ctx.strokeStyle = '#1E293B'; ctx.lineWidth = 2;
+      for(let x = -camX % 100; x < canvas.width; x+=100) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,canvas.height); ctx.stroke(); }
+      for(let y = -camY % 100; y < canvas.height; y+=100) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(canvas.width,y); ctx.stroke(); }
+
+      ctx.strokeStyle = '#38BDF8'; ctx.lineWidth = 5; ctx.strokeRect(-camX, -camY, worldSize, worldSize);
+      mapObstacles.forEach(o => { ctx.fillStyle = o.color; ctx.fillRect(o.x - camX, o.y - camY, o.w, o.h); });
+
+      state.enemies.forEach(e => {
+        if (e.type === 'SNIPER' && e.chargeTimer > 0) {
+          ctx.beginPath(); ctx.moveTo(e.x - camX, e.y - camY);
+          ctx.lineTo((e.x - camX) + Math.cos(e.aimAngle)*1000, (e.y - camY) + Math.sin(e.aimAngle)*1000);
+          ctx.strokeStyle = `rgba(239, 68, 68, ${e.chargeTimer / 60})`; ctx.lineWidth = 2; ctx.stroke();
+        }
+      });
+
+      for (let i = trails.length - 1; i >= 0; i--) {
+        let t = trails[i]; t.life--;
+        ctx.fillStyle = `rgba(56, 189, 248, ${t.life/20})`; ctx.save(); ctx.translate(t.x - camX, t.y - camY); ctx.rotate(t.angle); ctx.fillRect(-15, -15, 30, 30); ctx.restore();
+        if (t.life <= 0) trails.splice(i, 1);
+      }
+
+      state.bullets.forEach(b => {
+        ctx.fillStyle = b.color || '#EF4444'; ctx.beginPath(); ctx.arc(b.x - camX, b.y - camY, b.type === 'PLAYER' ? 4 : 6, 0, Math.PI*2); ctx.fill();
+      });
+
+      state.enemies.forEach(e => {
+        ctx.save(); ctx.translate(e.x - camX, e.y - camY);
+        ctx.fillStyle = e.type === 'TANK' ? '#F59E0B' : (e.type === 'SNIPER' ? '#EC4899' : '#EF4444');
+        if (e.type === 'TANK') { ctx.beginPath(); for(let i=0; i<6; i++) { ctx.lineTo(e.size*Math.cos(i*Math.PI/3), e.size*Math.sin(i*Math.PI/3)); } ctx.closePath(); ctx.fill(); }
+        else if (e.type === 'SNIPER') { ctx.rotate(e.aimAngle || 0); ctx.fillRect(-12, -12, 24, 24); }
+        else { ctx.rotate(Math.atan2(target.y - e.y, target.x - e.x)); ctx.beginPath(); ctx.moveTo(e.size, 0); ctx.lineTo(-e.size, e.size); ctx.lineTo(-e.size, -e.size); ctx.closePath(); ctx.fill(); }
+        ctx.fillStyle = '#000'; ctx.fillRect(-15, -e.size - 10, 30, 4); ctx.fillStyle = '#EF4444'; ctx.fillRect(-15, -e.size - 10, 30 * (e.hp/e.maxHp), 4);
+        ctx.restore();
+      });
+
+      Object.values(state.players).forEach(p => {
+        if(p.dead) return;
+        if(p.isDashing) trails.push({ x: p.x, y: p.y, angle: p.angle, life: 10 });
+        ctx.save(); ctx.translate(p.x - camX, p.y - camY);
+        if (p.knocked) { ctx.fillStyle = '#EF4444'; ctx.globalAlpha = 0.5 + Math.sin(Date.now()/200)*0.5; ctx.fillRect(-15, -15, 30, 30); ctx.globalAlpha = 1; }
+        else { ctx.rotate(p.angle); ctx.fillStyle = p.id === myId ? '#38BDF8' : '#10B981'; ctx.fillRect(-15, -15, 30, 30); ctx.fillStyle = '#FFF'; ctx.fillRect(15, -3, 15, 6); }
+        ctx.restore();
+        if (!p.knocked) { ctx.fillStyle = '#FFF'; ctx.font = '20px Teko'; ctx.textAlign = 'center'; ctx.fillText(p.name, p.x - camX, p.y - camY - 25); }
+      });
+
+      for (let i = floatingTexts.length - 1; i >= 0; i--) {
+        let ft = floatingTexts[i]; ft.y += ft.vy; ft.life--;
+        ctx.fillStyle = ft.color; ctx.globalAlpha = ft.life / 40; ctx.font = 'bold 24px Teko'; ctx.textAlign = 'center'; ctx.fillText(ft.text, ft.x - camX, ft.y - camY); ctx.globalAlpha = 1;
+        if (ft.life <= 0) floatingTexts.splice(i, 1);
+      }
+
+      requestAnimationFrame(render);
+    }
+    requestAnimationFrame(render);
+  </script>
+</body>
+</html>
