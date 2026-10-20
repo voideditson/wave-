@@ -8,7 +8,6 @@ const io = new Server(server, { cors: { origin: '*' } });
 
 app.use(express.static('public'));
 
-// Reduced map size by 50%
 const WORLD_SIZE = 3000;
 const TICK_RATE = 20;
 
@@ -35,7 +34,7 @@ const rooms = {};
 
 function generateMap() {
   const obstacles = [];
-  for (let i = 0; i < 75; i++) {
+  for (let i = 0; i < 60; i++) {
     obstacles.push({
       x: Math.random() * (WORLD_SIZE - 200) + 100,
       y: Math.random() * (WORLD_SIZE - 200) + 100,
@@ -60,7 +59,8 @@ function initPlayer(id, name, isHost) {
     stats: { spd: 5.5, dmg: 22, firerate: 380, bulletspeed: 14, regen: 0, sprintspd: 9, sprintdur: 1, revivespd: 1, pierce: 0, multishot: 1, lifesteal: 0, knockback: 1, armor: 1, crit: 0.05 },
     upgrades: {},
     lastShot: 0,
-    isReviving: false
+    isReviving: false,
+    hasPickedCard: false
   };
 }
 
@@ -135,7 +135,6 @@ io.on('connection', (socket) => {
       const now = Date.now();
       if (isShooting && now - p.lastShot > p.stats.firerate) {
         p.lastShot = now;
-        // Increased bullet spread calculation per multishot tier
         const spreadAmount = 0.28; 
         for (let i = 0; i < p.stats.multishot; i++) {
           const spread = (i - (p.stats.multishot - 1) / 2) * spreadAmount;
@@ -145,10 +144,11 @@ io.on('connection', (socket) => {
             x: p.x, y: p.y,
             vx: Math.cos(angle + spread) * p.stats.bulletspeed,
             vy: Math.sin(angle + spread) * p.stats.bulletspeed,
-            dmg: p.stats.dmg * (isCrit ? 2 : 1),
+            dmg: Math.round(p.stats.dmg * (isCrit ? 2 : 1)),
+            isCrit,
             pierce: p.stats.pierce, owner: p.id,
             color: isCrit ? '#FBBF24' : '#38BDF8',
-            life: 32 // Nerfed range / lifespan
+            life: 32
           });
         }
       }
@@ -187,7 +187,7 @@ function applyUpgrade(p, cardId) {
   if (cardId === 'hp') { p.maxHp *= 1.25; p.hp = Math.min(p.maxHp, p.hp + p.maxHp * 0.25); }
   if (cardId === 'spd') p.stats.spd *= 1.15;
   if (cardId === 'dmg') p.stats.dmg *= 1.20;
-  if (cardId === 'firerate') p.stats.firerate *= 0.85; // RPM Nerf
+  if (cardId === 'firerate') p.stats.firerate *= 0.85;
   if (cardId === 'bulletspeed') p.stats.bulletspeed *= 1.25;
   if (cardId === 'regen') p.stats.regen += 1.5;
   if (cardId === 'sprintspd') p.stats.sprintspd *= 1.25;
@@ -215,7 +215,6 @@ function spawnWave(room) {
 
   if (isBossWave) {
     const pos = getMapSpawnPosition(room);
-    // +400% Health Increase on Boss (6000 base scaling)
     const bossHp = 6000 * (1 + room.wave * 0.4);
     room.enemies.push({
       id: Math.random().toString(36).substring(2, 7),
@@ -224,11 +223,10 @@ function spawnWave(room) {
       speed: 2.2,
       size: 65,
       type: 'BOSS',
-      lastAttack: Date.now(),
-      attackState: 'IDLE'
+      lastAttack: Date.now()
     });
   } else {
-    const count = 10 + (room.wave * 3);
+    const count = 8 + (room.wave * 3);
     for (let i = 0; i < count; i++) {
       const pos = getMapSpawnPosition(room);
       const rand = Math.random();
@@ -238,13 +236,13 @@ function spawnWave(room) {
       let size = 16;
 
       if (rand < 0.25) {
-        type = 'PENTAGON'; // Gun Enemy
+        type = 'PENTAGON';
         speed = 2.8; hp *= 1.4; size = 20;
       } else if (rand < 0.45) {
-        type = 'CIRCLE'; // Speeder
+        type = 'CIRCLE';
         speed = 5.8; hp *= 0.7; size = 12;
       } else if (rand < 0.60) {
-        type = 'HEXAGON'; // Heavy Tank
+        type = 'HEXAGON';
         speed = 2.0; hp *= 3.5; size = 32;
       }
 
@@ -275,7 +273,6 @@ function getMapSpawnPosition(room) {
   return { x, y };
 }
 
-// Tick Loop
 setInterval(() => {
   for (const roomId in rooms) {
     const room = rooms[roomId];
@@ -285,14 +282,13 @@ setInterval(() => {
     const alivePlayers = players.filter(p => !p.dead && !p.knocked);
 
     if (alivePlayers.length === 0 && players.some(p => p.knocked)) {
-      // Waiting
+      // Waiting for revive/death timer
     } else if (alivePlayers.length === 0) {
       room.state = 'GAME_OVER';
       io.to(roomId).emit('gameOver', room.wave);
       continue;
     }
 
-    // Regeneration & Revive
     players.forEach(p => {
       if (p.knocked && !p.dead) {
         p.deathTimer--;
@@ -320,19 +316,18 @@ setInterval(() => {
       });
     });
 
-    // Player Bullets
+    // Player Bullets update
     for (let i = room.bullets.length - 1; i >= 0; i--) {
       let b = room.bullets[i];
       b.x += b.vx; b.y += b.vy; b.life--;
       if (b.life <= 0) room.bullets.splice(i, 1);
     }
 
-    // Enemy Bullets
+    // Enemy Bullets update
     for (let i = room.enemyBullets.length - 1; i >= 0; i--) {
       let eb = room.enemyBullets[i];
       eb.x += eb.vx; eb.y += eb.vy; eb.life--;
       
-      // Hit Player
       alivePlayers.forEach(p => {
         if (Math.hypot(p.x - eb.x, p.y - eb.y) < 20) {
           p.hp -= eb.dmg * p.stats.armor;
@@ -344,12 +339,10 @@ setInterval(() => {
       if (eb.life <= 0) room.enemyBullets.splice(i, 1);
     }
 
-    // Update Telegraph Danger Zones
     const now = Date.now();
     for (let i = room.telegraphs.length - 1; i >= 0; i--) {
       let t = room.telegraphs[i];
       if (now >= t.executeTime) {
-        // Fire Deadly Attack
         for (let a = 0; a < Math.PI * 2; a += Math.PI / 8) {
           room.enemyBullets.push({
             x: t.x, y: t.y,
@@ -362,7 +355,7 @@ setInterval(() => {
       }
     }
 
-    // Enemy Behavior & Collisions
+    // Enemy Processing
     for (let i = room.enemies.length - 1; i >= 0; i--) {
       let e = room.enemies[i];
       let target = null, minDist = Infinity;
@@ -374,7 +367,6 @@ setInterval(() => {
       if (target) {
         let angle = Math.atan2(target.y - e.y, target.x - e.x);
 
-        // Shooter enemy behavior
         if (e.type === 'PENTAGON') {
           if (minDist > 250) {
             e.x += Math.cos(angle) * e.speed;
@@ -388,27 +380,22 @@ setInterval(() => {
               dmg: 15, life: 60
             });
           }
-        } 
-        // Boss Behavior (Telegraphed Slow Attacks, Knockback Resistant)
-        else if (e.type === 'BOSS') {
+        } else if (e.type === 'BOSS') {
           e.x += Math.cos(angle) * e.speed;
           e.y += Math.sin(angle) * e.speed;
 
           if (now - e.lastAttack > 3500) {
             e.lastAttack = now;
-            // Charge Telegraphed Area Attack
             room.telegraphs.push({
               x: e.x, y: e.y, angle,
               radius: 250, executeTime: now + 1200
             });
           }
-        } 
-        else {
+        } else {
           e.x += Math.cos(angle) * e.speed;
           e.y += Math.sin(angle) * e.speed;
         }
 
-        // Touch Player
         if (minDist < e.size + 15) {
           let baseDamage = e.type === 'BOSS' ? 50 : 12;
           target.hp -= baseDamage * target.stats.armor;
@@ -417,17 +404,21 @@ setInterval(() => {
         }
       }
 
-      // Hit by Player Bullets
+      // Check bullet collisions
       for (let j = room.bullets.length - 1; j >= 0; j--) {
         let b = room.bullets[j];
         if (Math.hypot(b.x - e.x, b.y - e.y) < e.size + 6) {
           e.hp -= b.dmg;
           let owner = room.players[b.owner];
           
-          // Apply Knockback ONLY if not Boss
-          if (owner && e.type !== 'BOSS') {
-            e.x += b.vx * 0.15 * owner.stats.knockback;
-            e.y += b.vy * 0.15 * owner.stats.knockback;
+          if (owner) {
+            // Send floating damage pop-up event to client
+            io.to(roomId).emit('damagePop', { x: e.x, y: e.y, dmg: b.dmg, isCrit: b.isCrit });
+            
+            if (e.type !== 'BOSS') {
+              e.x += b.vx * 0.15 * owner.stats.knockback;
+              e.y += b.vy * 0.15 * owner.stats.knockback;
+            }
           }
 
           if (b.pierce > 0) b.pierce--;
@@ -444,23 +435,18 @@ setInterval(() => {
       }
     }
 
-    // Wave Completion & Every 2 Rounds Card Upgrades
+    // Wave progression (Upgrade Prompt Every Single Round)
     if (room.enemies.length === 0) {
-      if (room.wave % 5 === 0) applyBossBuffs(room);
+      const wasBoss = room.wave % 5 === 0;
+      if (wasBoss) applyBossBuffs(room);
 
+      room.state = 'CARD_SELECT';
+      players.forEach(p => {
+        p.hasPickedCard = false;
+        // Fixed: socket.to replaced with io.to to prevent socket error freeze
+        io.to(p.id).emit('showCards', { cards: getRandomCards(p), wasBoss });
+      });
       room.wave++;
-      
-      // Upgrades happen once every 2 rounds
-      if (room.wave % 2 === 0) {
-        room.state = 'CARD_SELECT';
-        players.forEach(p => {
-          p.hasPickedCard = false;
-          socket.to(p.id).emit('showCards', { cards: getRandomCards(p), wasBoss: (room.wave - 1) % 5 === 0 });
-        });
-      } else {
-        spawnWave(room);
-        io.to(roomId).emit('waveAdvanced', room.wave);
-      }
     }
 
     io.to(roomId).emit('gameState', {
