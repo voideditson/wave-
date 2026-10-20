@@ -23,7 +23,7 @@
     /* HUD */
     #hud { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
     
-    /* Team UI (Top Left) */
+    /* Team UI */
     .team-ui { position: absolute; top: 1rem; left: 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
     .team-member { background: rgba(15, 23, 42, 0.8); padding: 0.5rem 1rem; border-radius: 0.5rem; border-left: 4px solid #38BDF8; width: 250px; }
     .tm-name { font-size: 1.2rem; font-weight: bold; display: flex; justify-content: space-between; }
@@ -31,14 +31,14 @@
     .tm-hp { background: #10B981; height: 100%; transition: 0.2s; }
     .knocked-text { color: #EF4444; font-size: 1rem; font-weight: bold; }
 
-    /* Wave UI (Top Center) */
+    /* Wave UI */
     .wave-ui { position: absolute; top: 1rem; left: 50%; transform: translateX(-50%); text-align: center; background: rgba(15,23,42,0.8); padding: 0.5rem 2rem; border-radius: 0.5rem; border-bottom: 4px solid #F59E0B; }
     .wave-ui h2 { font-size: 2.5rem; margin: 0; line-height: 1; color: #F59E0B; }
 
-    /* Minimap (Top Right) */
+    /* Minimap */
     #minimap { position: absolute; top: 1rem; right: 1rem; width: 200px; height: 200px; background: rgba(15,23,42,0.8); border: 2px solid #334155; border-radius: 0.5rem; }
 
-    /* Spectator UI (Bottom Center) */
+    /* Spectator UI */
     .spectate-ui { position: absolute; bottom: 2rem; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 1rem; pointer-events: auto; }
     .spec-btn { background: #1E293B; border: 2px solid #38BDF8; color: #38BDF8; padding: 0.5rem 1rem; cursor: pointer; border-radius: 0.5rem; font-size: 1.5rem; }
     .spec-name { font-size: 2rem; font-weight: bold; background: rgba(0,0,0,0.5); padding: 0 1rem; border-radius: 0.5rem; }
@@ -77,7 +77,7 @@
   <!-- Upgrade Card Picker -->
   <div class="overlay hidden" id="cardOverlay">
     <div style="text-align:center;">
-      <h1 id="upgradeTitle" style="color:#F59E0B">WAVE CLEARED! CHOOSE UPGRADE</h1>
+      <h1 id="upgradeTitle" style="color:#F59E0B">CHOOSE AN UPGRADE</h1>
       <div class="cards-container" id="cardsBox"></div>
     </div>
   </div>
@@ -116,22 +116,19 @@
     let myId = null;
     let roomId = null;
     let isHost = false;
-    let worldSize = 6000;
+    let worldSize = 3000;
     let mapObstacles = [];
-    let state = { players: {}, enemies: [], bullets: [] };
+    let state = { players: {}, enemies: [], bullets: [], enemyBullets: [], telegraphs: [] };
 
-    // Inputs
     let keys = { w:false, a:false, s:false, d:false, shift:false, e:false };
     let mouse = { x: window.innerWidth/2, y: window.innerHeight/2, down: false };
     
-    // Spectator
     let spectatingId = null;
     let spectateIndex = 0;
 
     window.addEventListener('resize', () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; });
     window.dispatchEvent(new Event('resize'));
 
-    // --- SOCKET LOGIC ---
     function joinRoom() {
       const name = document.getElementById('username').value.trim() || 'Player';
       roomId = document.getElementById('roomCode').value.trim().toUpperCase() || Math.random().toString(36).substr(2, 4).toUpperCase();
@@ -177,13 +174,17 @@
     socket.on('showCards', (data) => {
       const cards = data.cards;
       const box = document.getElementById('cardsBox');
-      document.getElementById('upgradeTitle').innerText = data.wasBoss ? "BOSS DEFEATED! TEAM BUFFED + CHOOSE UPGRADE" : "WAVE CLEARED! CHOOSE UPGRADE";
-      box.innerHTML = cards.map(c => `
-        <div class="upgrade-card" onclick="pickCard('${c.id}')">
-          <div class="uc-title">${c.name}</div>
-          <div class="uc-desc">${c.desc}</div>
-        </div>
-      `).join('');
+      const p = state.players[myId];
+      document.getElementById('upgradeTitle').innerText = data.wasBoss ? "BOSS DEFEATED! TEAM BUFFED + CHOOSE UPGRADE" : "CHOOSE AN UPGRADE";
+      box.innerHTML = cards.map(c => {
+        const tier = (p && p.upgrades[c.id]) ? p.upgrades[c.id] : 0;
+        return `
+          <div class="upgrade-card" onclick="pickCard('${c.id}')">
+            <div class="uc-title">${c.name} (${tier}/5)</div>
+            <div class="uc-desc">${c.desc}</div>
+          </div>
+        `;
+      }).join('');
       document.getElementById('cardOverlay').classList.remove('hidden');
     });
 
@@ -197,7 +198,6 @@
       document.getElementById('cardOverlay').classList.add('hidden');
     }
 
-    // --- INPUT HANDLING ---
     window.addEventListener('keydown', e => { if(keys.hasOwnProperty(e.key.toLowerCase())) keys[e.key.toLowerCase()] = true; });
     window.addEventListener('keyup', e => { if(keys.hasOwnProperty(e.key.toLowerCase())) keys[e.key.toLowerCase()] = false; });
     window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
@@ -213,7 +213,6 @@
       socket.emit('playerInput', { roomId, dx, dy, angle, isShooting: mouse.down, isSprinting: keys.shift, isReviving: keys.e });
     }, 1000 / 30);
 
-    // --- SPECTATOR ---
     function cycleSpectate(dir) {
       const alive = Object.values(state.players).filter(p => !p.dead);
       if (alive.length === 0) return;
@@ -221,7 +220,6 @@
       spectatingId = alive[spectateIndex].id;
     }
 
-    // --- RENDER & UI ---
     function updateUI() {
       const me = state.players[myId];
       if (!me) return;
@@ -236,7 +234,6 @@
         spectatingId = myId;
       }
 
-      // Team Status Side Bars
       document.getElementById('teamUI').innerHTML = Object.values(state.players).map(p => {
         const hpPct = Math.max(0, (p.hp / p.maxHp) * 100);
         let status = '';
@@ -251,13 +248,12 @@
         `;
       }).join('');
 
-      // Minimap Rendering
       mCtx.clearRect(0, 0, 200, 200);
       const s = 200 / worldSize;
       mCtx.fillStyle = 'rgba(56,189,248,0.2)'; mapObstacles.forEach(o => mCtx.fillRect(o.x*s, o.y*s, o.w*s, o.h*s));
       state.enemies.forEach(e => {
         mCtx.fillStyle = e.type === 'BOSS' ? '#A855F7' : '#EF4444';
-        mCtx.beginPath(); mCtx.arc(e.x*s, e.y*s, e.type === 'BOSS' ? 5 : 2, 0, Math.PI*2); mCtx.fill();
+        mCtx.beginPath(); mCtx.arc(e.x*s, e.y*s, e.type === 'BOSS' ? 6 : 2, 0, Math.PI*2); mCtx.fill();
       });
       Object.values(state.players).forEach(p => {
         if(p.dead) return;
@@ -276,7 +272,7 @@
       const camX = target.x - canvas.width / 2;
       const camY = target.y - canvas.height / 2;
 
-      // Grid Pattern
+      // Draw Grid
       ctx.strokeStyle = '#1E293B'; ctx.lineWidth = 2;
       for(let x = -camX % 100; x < canvas.width; x+=100) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,canvas.height); ctx.stroke(); }
       for(let y = -camY % 100; y < canvas.height; y+=100) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(canvas.width,y); ctx.stroke(); }
@@ -285,36 +281,55 @@
       ctx.strokeStyle = '#38BDF8'; ctx.lineWidth = 5; ctx.strokeRect(-camX, -camY, worldSize, worldSize);
       mapObstacles.forEach(o => { ctx.fillStyle = o.color; ctx.fillRect(o.x - camX, o.y - camY, o.w, o.h); });
 
-      // Bullets
+      // Draw Boss Attack Telegraphs (Danger Zones)
+      if (state.telegraphs) {
+        state.telegraphs.forEach(t => {
+          ctx.save();
+          ctx.fillStyle = 'rgba(239, 68, 68, 0.25)';
+          ctx.strokeStyle = '#EF4444'; ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(t.x - camX, t.y - camY, t.radius, 0, Math.PI * 2);
+          ctx.fill(); ctx.stroke();
+          ctx.restore();
+        });
+      }
+
+      // Player Bullets
       state.bullets.forEach(b => {
         ctx.fillStyle = b.color; ctx.beginPath(); ctx.arc(b.x - camX, b.y - camY, 4, 0, Math.PI*2); ctx.fill();
       });
 
-      // Enemies (Multiple Shapes & Boss)
+      // Enemy Bullets
+      if (state.enemyBullets) {
+        state.enemyBullets.forEach(eb => {
+          ctx.fillStyle = '#F43F5E'; ctx.beginPath(); ctx.arc(eb.x - camX, eb.y - camY, 6, 0, Math.PI*2); ctx.fill();
+        });
+      }
+
+      // Enemies
       state.enemies.forEach(e => {
         ctx.save(); ctx.translate(e.x - camX, e.y - camY);
 
-        if (e.type === 'BOSS') { // Massive Skull / Octagon Boss Shape
+        if (e.type === 'BOSS') {
           ctx.fillStyle = '#A855F7';
-          ctx.beginPath();
-          for(let i=0; i<8; i++) { ctx.lineTo(e.size*Math.cos(i*Math.PI/4), e.size*Math.sin(i*Math.PI/4)); }
+          ctx.beginPath(); for(let i=0; i<8; i++) { ctx.lineTo(e.size*Math.cos(i*Math.PI/4), e.size*Math.sin(i*Math.PI/4)); }
           ctx.closePath(); ctx.fill();
-        } else if (e.type === 'HEXAGON') { // Heavy Tank
+        } else if (e.type === 'HEXAGON') {
           ctx.fillStyle = '#F59E0B';
           ctx.beginPath(); for(let i=0; i<6; i++) { ctx.lineTo(e.size*Math.cos(i*Math.PI/3), e.size*Math.sin(i*Math.PI/3)); } ctx.closePath(); ctx.fill();
-        } else if (e.type === 'PENTAGON') { // Medium Chaser
+        } else if (e.type === 'PENTAGON') { // Shooter Enemy
           ctx.fillStyle = '#10B981';
           ctx.beginPath(); for(let i=0; i<5; i++) { ctx.lineTo(e.size*Math.cos(i*Math.PI/2.5), e.size*Math.sin(i*Math.PI/2.5)); } ctx.closePath(); ctx.fill();
-        } else if (e.type === 'CIRCLE') { // Fast Speeder
+        } else if (e.type === 'CIRCLE') {
           ctx.fillStyle = '#EC4899';
           ctx.beginPath(); ctx.arc(0, 0, e.size, 0, Math.PI*2); ctx.fill();
-        } else { // Standard Triangle
+        } else {
           ctx.fillStyle = '#EF4444';
           ctx.rotate(Math.atan2(target.y - e.y, target.x - e.x));
           ctx.beginPath(); ctx.moveTo(e.size, 0); ctx.lineTo(-e.size, e.size); ctx.lineTo(-e.size, -e.size); ctx.closePath(); ctx.fill();
         }
 
-        // Enemy HP Bar
+        // HP Bar
         ctx.fillStyle = '#000'; ctx.fillRect(-20, -e.size - 12, 40, 5);
         ctx.fillStyle = e.type === 'BOSS' ? '#A855F7' : '#EF4444'; 
         ctx.fillRect(-20, -e.size - 12, Math.max(0, 40 * (e.hp/e.maxHp)), 5);
@@ -329,19 +344,16 @@
         if (p.knocked) {
           ctx.fillStyle = '#EF4444'; ctx.globalAlpha = 0.5 + Math.sin(Date.now()/200)*0.5;
           ctx.fillRect(-15, -15, 30, 30); ctx.globalAlpha = 1;
-
-          // Revive Prompt Overlay
           ctx.fillStyle = '#FFF'; ctx.font = '16px Teko'; ctx.textAlign = 'center';
           ctx.fillText("HOLD [E] TO REVIVE", 0, -25);
         } else {
           ctx.rotate(p.angle);
           ctx.fillStyle = p.id === myId ? '#38BDF8' : '#10B981';
           ctx.fillRect(-15, -15, 30, 30);
-          ctx.fillStyle = '#FFF'; ctx.fillRect(15, -3, 15, 6); // Gun barrel
+          ctx.fillStyle = '#FFF'; ctx.fillRect(15, -3, 15, 6);
         }
         ctx.restore();
         
-        // Name and Stamina Bar
         if (!p.knocked) {
           ctx.fillStyle = '#FFF'; ctx.font = '20px Teko'; ctx.textAlign = 'center'; ctx.fillText(p.name, p.x - camX, p.y - camY - 25);
           if (p.id === myId) {
