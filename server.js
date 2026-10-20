@@ -1,138 +1,339 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
+
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
+
 app.use(express.static('public'));
 
-const WORLD_SIZE = 6000, TICK_RATE = 30;
+const WORLD_SIZE = 6000;
+const TICK_RATE = 20;
+
+// 15 Upgrade Cards (Max Tier 3)
 const CARDS = [
-  { id: 'hp', name: 'Vitality', desc: '+25% Max HP' }, { id: 'spd', name: 'Agility', desc: '+15% Move Speed' },
-  { id: 'dmg', name: 'Brute Force', desc: '+20% Damage' }, { id: 'firerate', name: 'Trigger Happy', desc: '+20% Fire Rate' },
-  { id: 'regen', name: 'Regen', desc: 'Heal 1 HP/sec' }, { id: 'sprintspd', name: 'Track Star', desc: '+25% Sprint Speed' },
-  { id: 'pierce', name: 'Piercing', desc: 'Bullets pierce +1' }, { id: 'multishot', name: 'Spread', desc: '+1 Projectile' },
-  { id: 'lifesteal', name: 'Vampirism', desc: 'Heal on kill' }, { id: 'fire_ammo', name: 'Incendiary', desc: 'Burn enemies' },
-  { id: 'ice_ammo', name: 'Cryogenics', desc: 'Slow enemies' }
+  { id: 'hp', name: 'Vitality', desc: '+25% Max HP' },
+  { id: 'spd', name: 'Agility', desc: '+15% Move Speed' },
+  { id: 'dmg', name: 'Brute Force', desc: '+20% Damage' },
+  { id: 'firerate', name: 'Trigger Happy', desc: '+20% Fire Rate' },
+  { id: 'bulletspeed', name: 'Velocity', desc: '+25% Bullet Speed' },
+  { id: 'regen', name: 'Cellular Regen', desc: 'Heal 1 HP/sec' },
+  { id: 'sprintspd', name: 'Track Star', desc: '+25% Sprint Speed' },
+  { id: 'sprintdur', name: 'Marathon', desc: '+30% Sprint Duration' },
+  { id: 'revive', name: 'Combat Medic', desc: '+50% Revive Speed' },
+  { id: 'pierce', name: 'Piercing', desc: 'Bullets pierce +1 target' },
+  { id: 'multishot', name: 'Spread', desc: '+1 Projectile per shot' },
+  { id: 'lifesteal', name: 'Vampirism', desc: 'Heal on enemy kill' },
+  { id: 'knockback', name: 'Repel', desc: '+30% Knockback' },
+  { id: 'armor', name: 'Plating', desc: '-10% Damage Taken' },
+  { id: 'crit', name: 'Lethality', desc: '+10% Crit Chance' }
 ];
 
 const rooms = {};
 
+function generateMap() {
+  const obstacles = [];
+  for (let i = 0; i < 150; i++) {
+    obstacles.push({
+      x: Math.random() * (WORLD_SIZE - 200) + 100,
+      y: Math.random() * (WORLD_SIZE - 200) + 100,
+      w: Math.random() * 150 + 50,
+      h: Math.random() * 150 + 50,
+      color: ['#1E293B', '#334155', '#0F172A'][Math.floor(Math.random() * 3)]
+    });
+  }
+  return obstacles;
+}
+
 function initPlayer(id, name, isHost) {
   return {
-    id, name, isHost, x: WORLD_SIZE/2, y: WORLD_SIZE/2, vx: 0, vy: 0, angle: 0, hp: 100, maxHp: 100,
-    knocked: false, deathTimer: 30*TICK_RATE, dead: false, reviveProgress: 0, stamina: 100, maxStamina: 100, isDashing: false, dashTimer: 0,
-    stats: { spd: 6, dmg: 25, firerate: 300, bulletspeed: 15, regen: 0, sprintspd: 9, revivespd: 1, pierce: 0, multishot: 1, lifesteal: 0, knockback: 1, element: 'none', crit: 0.05 },
-    upgrades: {}, lastShot: 0, hasPickedCard: false
+    id, name, isHost,
+    x: WORLD_SIZE / 2, y: WORLD_SIZE / 2,
+    vx: 0, vy: 0, angle: 0,
+    hp: 100, maxHp: 100,
+    knocked: false, deathTimer: 30 * TICK_RATE, dead: false,
+    reviveProgress: 0,
+    sprint: 100, maxSprint: 100,
+    stats: { spd: 5, dmg: 20, firerate: 300, bulletspeed: 12, regen: 0, sprintspd: 8, sprintdur: 1, revivespd: 1, pierce: 0, multishot: 1, lifesteal: 0, knockback: 1, armor: 1, crit: 0 },
+    upgrades: {},
+    lastShot: 0
   };
+}
+
+function getRandomCards() {
+  const shuffled = [...CARDS].sort(() => 0.5 - Math.random());
+  return shuffled.slice(0, 3);
 }
 
 io.on('connection', (socket) => {
   socket.on('joinRoom', ({ roomId, username }) => {
     socket.join(roomId);
-    if (!rooms[roomId]) rooms[roomId] = { id: roomId, state: 'LOBBY', wave: 0, weather: 'CLEAR', players: {}, enemies: [], bullets: [], traps: [], host: socket.id };
-    rooms[roomId].players[socket.id] = initPlayer(socket.id, username, rooms[roomId].host === socket.id);
-    io.to(roomId).emit('updateLobby', Object.values(rooms[roomId].players));
+    if (!rooms[roomId]) {
+      rooms[roomId] = {
+        id: roomId, state: 'LOBBY', wave: 0,
+        players: {}, enemies: [], bullets: [],
+        map: [],
+        host: socket.id,
+        cardsPending: false
+      };
+    }
+    const room = rooms[roomId];
+    room.players[socket.id] = initPlayer(socket.id, username, room.host === socket.id);
+    io.to(roomId).emit('updateLobby', Object.values(room.players));
   });
 
   socket.on('startGame', (roomId) => {
-    if (rooms[roomId] && rooms[roomId].host === socket.id) {
-      rooms[roomId].wave = 1; rooms[roomId].state = 'PLAYING'; rooms[roomId].enemies = []; rooms[roomId].bullets = [];
-      Object.values(rooms[roomId].players).forEach(p => Object.assign(p, initPlayer(p.id, p.name, p.isHost)));
-      spawnWave(rooms[roomId]);
-      io.to(roomId).emit('gameStarted', { worldSize: WORLD_SIZE });
+    const room = rooms[roomId];
+    if (room && room.host === socket.id) {
+      room.map = generateMap();
+      room.wave = 1;
+      room.state = 'PLAYING';
+      room.enemies = [];
+      room.bullets = [];
+      Object.values(room.players).forEach(p => {
+        Object.assign(p, initPlayer(p.id, p.name, p.isHost)); // Reset stats
+      });
+      spawnWave(room);
+      io.to(roomId).emit('gameStarted', { map: room.map, worldSize: WORLD_SIZE });
     }
   });
 
-  socket.on('playerInput', ({ roomId, dx, dy, angle, isShooting, isSprinting, isDashing }) => {
-    const room = rooms[roomId]; if (!room || room.state !== 'PLAYING') return;
-    const p = room.players[socket.id]; if (!p || p.dead || p.knocked) return;
+  socket.on('playerInput', ({ roomId, dx, dy, angle, isShooting, isSprinting }) => {
+    const room = rooms[roomId];
+    if (!room || room.state !== 'PLAYING') return;
+    const p = room.players[socket.id];
+    if (!p || p.dead) return;
+
     p.angle = angle;
-
-    if (isDashing && p.stamina >= 30 && p.dashTimer <= 0) { p.isDashing = true; p.dashTimer = 12; p.stamina -= 30; let len = Math.hypot(dx, dy)||1; p.vx = (dx/len)*25; p.vy = (dy/len)*25; }
-    if (p.dashTimer > 0) { p.dashTimer--; p.x += p.vx; p.y += p.vy; if (p.dashTimer <= 0) p.isDashing = false; } 
-    else {
+    if (!p.knocked) {
+      // Movement
       let speed = p.stats.spd;
-      if (isSprinting && p.stamina > 0) { speed = p.stats.sprintspd; p.stamina -= 0.5; } else if (p.stamina < p.maxStamina) p.stamina += 0.4;
-      let len = Math.hypot(dx, dy); if (len > 0) { p.x += (dx/len)*speed; p.y += (dy/len)*speed; }
-    }
-    p.x = Math.max(20, Math.min(WORLD_SIZE-20, p.x)); p.y = Math.max(20, Math.min(WORLD_SIZE-20, p.y));
+      if (isSprinting && p.sprint > 0) {
+        speed = p.stats.sprintspd;
+        p.sprint -= 2 / p.stats.sprintdur;
+      } else if (p.sprint < p.stats.maxSprint) {
+        p.sprint += 0.5;
+      }
+      
+      let len = Math.hypot(dx, dy);
+      if (len > 0) { p.x += (dx / len) * speed; p.y += (dy / len) * speed; }
+      
+      // Boundaries
+      p.x = Math.max(20, Math.min(WORLD_SIZE - 20, p.x));
+      p.y = Math.max(20, Math.min(WORLD_SIZE - 20, p.y));
 
-    if (isShooting && Date.now() - p.lastShot > p.stats.firerate && !p.isDashing) {
-      p.lastShot = Date.now();
-      for (let i = 0; i < p.stats.multishot; i++) {
-        let spread = (i - (p.stats.multishot-1)/2) * 0.15;
-        let isCrit = Math.random() < p.stats.crit;
-        room.bullets.push({ x: p.x, y: p.y, vx: Math.cos(angle+spread)*p.stats.bulletspeed, vy: Math.sin(angle+spread)*p.stats.bulletspeed, dmg: p.stats.dmg*(isCrit?2:1), pierce: p.stats.pierce, owner: p.id, element: p.stats.element, isCrit, life: 80, type: 'PLAYER' });
+      // Shooting
+      const now = Date.now();
+      if (isShooting && now - p.lastShot > p.stats.firerate) {
+        p.lastShot = now;
+        for (let i = 0; i < p.stats.multishot; i++) {
+          const spread = (i - (p.stats.multishot - 1) / 2) * 0.15;
+          let isCrit = Math.random() < p.stats.crit;
+          room.bullets.push({
+            x: p.x, y: p.y,
+            vx: Math.cos(angle + spread) * p.stats.bulletspeed,
+            vy: Math.sin(angle + spread) * p.stats.bulletspeed,
+            dmg: p.stats.dmg * (isCrit ? 2 : 1),
+            pierce: p.stats.pierce, owner: p.id,
+            color: isCrit ? '#FBBF24' : '#38BDF8',
+            life: 60
+          });
+        }
       }
     }
   });
 
   socket.on('selectCard', ({ roomId, cardId }) => {
-    const room = rooms[roomId]; if (!room) return;
+    const room = rooms[roomId];
+    if (!room) return;
     const p = room.players[socket.id];
-    if (p && !p.hasPickedCard) {
-      if (cardId === 'hp') { p.maxHp *= 1.25; p.hp = p.maxHp; } if (cardId === 'spd') p.stats.spd *= 1.15; if (cardId === 'dmg') p.stats.dmg *= 1.20;
-      if (cardId === 'firerate') p.stats.firerate *= 0.8; if (cardId === 'fire_ammo') p.stats.element = 'FIRE'; if (cardId === 'ice_ammo') p.stats.element = 'ICE';
-      if (cardId === 'multishot') p.stats.multishot += 1; if (cardId === 'pierce') p.stats.pierce += 1;
+    if (p) {
+      p.upgrades[cardId] = (p.upgrades[cardId] || 0) + 1;
+      applyUpgrade(p, cardId);
       p.hasPickedCard = true;
     }
-    if (Object.values(room.players).filter(pl=>!pl.dead).every(pl=>pl.hasPickedCard)) { room.state = 'PLAYING'; spawnWave(room); io.to(roomId).emit('resumeWave', { wave: room.wave }); }
+    
+    // Check if everyone picked
+    if (Object.values(room.players).every(pl => pl.dead || pl.hasPickedCard)) {
+      room.state = 'PLAYING';
+      spawnWave(room);
+      io.to(roomId).emit('resumeWave', room.wave);
+    }
   });
 
-  socket.on('pingMap', ({roomId, x, y}) => io.to(roomId).emit('mapPinged', {x, y, color: '#38BDF8'}));
-  socket.on('disconnect', () => { for (let r in rooms) if (rooms[r].players[socket.id]) delete rooms[r].players[socket.id]; });
+  socket.on('disconnect', () => {
+    for (let r in rooms) {
+      if (rooms[r].players[socket.id]) {
+        delete rooms[r].players[socket.id];
+        if (Object.keys(rooms[r].players).length === 0) delete rooms[r];
+        else io.to(r).emit('updateLobby', Object.values(rooms[r].players));
+      }
+    }
+  });
 });
 
+function applyUpgrade(p, cardId) {
+  // Apply math based on cardId
+  if (cardId === 'hp') { p.maxHp *= 1.25; p.hp = p.maxHp; }
+  if (cardId === 'spd') p.stats.spd *= 1.15;
+  if (cardId === 'dmg') p.stats.dmg *= 1.20;
+  if (cardId === 'firerate') p.stats.firerate *= 0.8;
+  if (cardId === 'bulletspeed') p.stats.bulletspeed *= 1.25;
+  if (cardId === 'regen') p.stats.regen += 1;
+  if (cardId === 'sprintspd') p.stats.sprintspd *= 1.25;
+  if (cardId === 'sprintdur') p.stats.sprintdur *= 1.30;
+  if (cardId === 'revive') p.stats.revivespd *= 1.5;
+  if (cardId === 'pierce') p.stats.pierce += 1;
+  if (cardId === 'multishot') p.stats.multishot += 1;
+  if (cardId === 'lifesteal') p.stats.lifesteal += 5;
+  if (cardId === 'knockback') p.stats.knockback *= 1.3;
+  if (cardId === 'armor') p.stats.armor *= 0.9;
+  if (cardId === 'crit') p.stats.crit += 0.1;
+}
+
 function spawnWave(room) {
-  for (let i = 0; i < 10 + (room.wave*5); i++) {
-    let x = Math.random()<0.5 ? -50 : WORLD_SIZE+50, y = Math.random()*WORLD_SIZE;
-    let type = 'NORMAL', hp = 40*(1+room.wave*0.1), size = 15, speed = 4+(room.wave*0.05);
-    if (Math.random()<0.15) { type = 'SPLITTER'; hp = 150*(1+room.wave*0.1); size = 30; speed = 2.5; }
-    else if (Math.random()<0.1) { type = 'SNIPER'; hp = 30*(1+room.wave*0.1); size = 18; speed = 2; }
-    room.enemies.push({ id: Math.random(), x, y, hp, maxHp: hp, speed, baseSpeed: speed, size, type, chargeTimer: 0, status: 'NONE', statusTimer: 0 });
+  const count = 10 + (room.wave * 5);
+  for (let i = 0; i < count; i++) {
+    const edge = Math.floor(Math.random() * 4);
+    let x, y;
+    if (edge === 0) { x = Math.random() * WORLD_SIZE; y = -50; }
+    else if (edge === 1) { x = WORLD_SIZE + 50; y = Math.random() * WORLD_SIZE; }
+    else if (edge === 2) { x = Math.random() * WORLD_SIZE; y = WORLD_SIZE + 50; }
+    else { x = -50; y = Math.random() * WORLD_SIZE; }
+
+    const isTank = Math.random() < 0.1 + (room.wave * 0.01);
+    room.enemies.push({
+      id: Math.random(),
+      x, y,
+      hp: (isTank ? 100 : 30) * (1 + room.wave * 0.15),
+      maxHp: (isTank ? 100 : 30) * (1 + room.wave * 0.15),
+      speed: isTank ? 2 : 4 + (room.wave * 0.05),
+      size: isTank ? 30 : 15,
+      type: isTank ? 'TANK' : 'NORMAL'
+    });
   }
 }
 
+// Tick Loop
 setInterval(() => {
   for (const roomId in rooms) {
-    const room = rooms[roomId]; if (room.state !== 'PLAYING') continue;
-    const players = Object.values(room.players), alivePlayers = players.filter(p=>!p.dead&&!p.knocked);
-    if (alivePlayers.length === 0 && !players.some(p=>p.knocked&&!p.dead)) { room.state = 'GAME_OVER'; io.to(roomId).emit('gameOver', room.wave); continue; }
+    const room = rooms[roomId];
+    if (room.state !== 'PLAYING') continue;
 
-    players.forEach(p => { if (p.knocked&&!p.dead) { p.deathTimer--; if(p.deathTimer<=0) p.dead=true; } else if (p.hp<p.maxHp && p.stats.regen>0) p.hp = Math.min(p.maxHp, p.hp+(p.stats.regen/TICK_RATE)); });
+    const players = Object.values(room.players);
+    const alivePlayers = players.filter(p => !p.dead && !p.knocked);
     
+    // Game Over check
+    if (alivePlayers.length === 0 && players.some(p => p.knocked)) {
+      // Just waiting for death timers
+    } else if (alivePlayers.length === 0) {
+      room.state = 'GAME_OVER';
+      io.to(roomId).emit('gameOver', room.wave);
+      continue;
+    }
+
+    // Regen & Knockdown logic
+    players.forEach(p => {
+      if (p.knocked && !p.dead) {
+        p.deathTimer--;
+        p.reviveProgress = Math.max(0, p.reviveProgress - 2); // Decay revive
+        if (p.deathTimer <= 0) p.dead = true;
+      } else if (!p.knocked && !p.dead && p.hp < p.maxHp && p.stats.regen > 0) {
+        p.hp = Math.min(p.maxHp, p.hp + (p.stats.regen / TICK_RATE));
+      }
+    });
+
+    // Revive Logic (Proximity)
+    alivePlayers.forEach(rescuer => {
+      players.forEach(downed => {
+        if (downed.knocked && !downed.dead && Math.hypot(rescuer.x - downed.x, rescuer.y - downed.y) < 80) {
+          downed.reviveProgress += 2 * rescuer.stats.revivespd;
+          if (downed.reviveProgress >= 100) {
+            downed.knocked = false;
+            downed.hp = downed.maxHp * 0.3; // Revive with 30% HP
+            downed.deathTimer = 30 * TICK_RATE;
+          }
+        }
+      });
+    });
+
+    // Bullets
+    for (let i = room.bullets.length - 1; i >= 0; i--) {
+      let b = room.bullets[i];
+      b.x += b.vx; b.y += b.vy; b.life--;
+      if (b.life <= 0) room.bullets.splice(i, 1);
+    }
+
+    // Enemies
     for (let i = room.enemies.length - 1; i >= 0; i--) {
       let e = room.enemies[i];
-      if (e.statusTimer > 0) { e.statusTimer--; if (e.status === 'FIRE' && e.statusTimer%10===0) e.hp-=5; if (e.status === 'ICE') e.speed = e.baseSpeed*0.4; } else { e.speed = e.baseSpeed; e.status = 'NONE'; }
-      if (e.hp <= 0) { room.enemies.splice(i, 1); continue; }
-      
-      let target = alivePlayers.sort((a,b)=>Math.hypot(a.x-e.x,a.y-e.y)-Math.hypot(b.x-e.x,b.y-e.y))[0];
+      // Target nearest alive player
+      let target = null, minDist = Infinity;
+      alivePlayers.forEach(p => {
+        let d = Math.hypot(p.x - e.x, p.y - e.y);
+        if (d < minDist) { minDist = d; target = p; }
+      });
+
       if (target) {
-        let angle = Math.atan2(target.y-e.y, target.x-e.x), dist = Math.hypot(target.x-e.x, target.y-e.y);
-        if (e.type === 'SNIPER') { if (dist < 800) { e.chargeTimer++; e.aimAngle=angle; if(e.chargeTimer>60){ room.bullets.push({x:e.x,y:e.y,vx:Math.cos(angle)*22,vy:Math.sin(angle)*22,dmg:45,life:100,type:'ENEMY'}); e.chargeTimer=0; } } else { e.x+=Math.cos(angle)*e.speed; e.y+=Math.sin(angle)*e.speed; } }
-        else { e.x+=Math.cos(angle)*e.speed; e.y+=Math.sin(angle)*e.speed; if (dist < e.size+15 && !target.isDashing) { target.hp -= (e.type==='SPLITTER'?30:15); if(target.hp<=0) target.knocked=true; e.x-=Math.cos(angle)*50; e.y-=Math.sin(angle)*50; } }
+        let angle = Math.atan2(target.y - e.y, target.x - e.x);
+        e.x += Math.cos(angle) * e.speed;
+        e.y += Math.sin(angle) * e.speed;
+
+        // Hit player
+        if (minDist < e.size + 15) {
+          target.hp -= (e.type === 'TANK' ? 20 : 10) * target.stats.armor;
+          if (target.hp <= 0) {
+            target.knocked = true;
+            target.hp = 0;
+          }
+          // Bounce enemy back
+          e.x -= Math.cos(angle) * 50; e.y -= Math.sin(angle) * 50;
+        }
+      }
+
+      // Hit by bullet
+      for (let j = room.bullets.length - 1; j >= 0; j--) {
+        let b = room.bullets[j];
+        if (Math.hypot(b.x - e.x, b.y - e.y) < e.size + 5) {
+          e.hp -= b.dmg;
+          e.x += b.vx * 0.2 * room.players[b.owner].stats.knockback; // Knockback
+          e.y += b.vy * 0.2 * room.players[b.owner].stats.knockback;
+          
+          if (b.pierce > 0) b.pierce--;
+          else room.bullets.splice(j, 1);
+
+          if (e.hp <= 0) {
+            if (room.players[b.owner].stats.lifesteal > 0 && !room.players[b.owner].knocked) {
+              room.players[b.owner].hp = Math.min(room.players[b.owner].maxHp, room.players[b.owner].hp + room.players[b.owner].stats.lifesteal);
+            }
+            room.enemies.splice(i, 1);
+            break;
+          }
+        }
       }
     }
 
-    for (let j = room.bullets.length - 1; j >= 0; j--) {
-      let b = room.bullets[j]; b.x+=b.vx; b.y+=b.vy; b.life--; let destroyed = false;
-      if (b.type === 'PLAYER') {
-        for (let i = room.enemies.length - 1; i >= 0; i--) {
-          let e = room.enemies[i];
-          if (Math.hypot(b.x-e.x, b.y-e.y) < e.size+8) {
-            e.hp -= b.dmg; if(b.element!=='none'){e.status=b.element; e.statusTimer=60;}
-            if (b.pierce>0) b.pierce--; else destroyed = true;
-            if (e.hp <= 0) { if (e.type === 'SPLITTER') { room.enemies.push({id:Math.random(),x:e.x-15,y:e.y,hp:60,maxHp:60,speed:6,baseSpeed:6,size:12,type:'NORMAL',chargeTimer:0,status:'NONE',statusTimer:0}); room.enemies.push({id:Math.random(),x:e.x+15,y:e.y,hp:60,maxHp:60,speed:6,baseSpeed:6,size:12,type:'NORMAL',chargeTimer:0,status:'NONE',statusTimer:0}); } room.enemies.splice(i, 1); }
-            if (destroyed) break;
-          }
-        }
-      } else if (b.type === 'ENEMY') { alivePlayers.forEach(p => { if (!p.isDashing && Math.hypot(p.x-b.x,p.y-b.y)<20) { p.hp-=b.dmg; if(p.hp<=0)p.knocked=true; destroyed=true; } }); }
-      if (destroyed || b.life <= 0) room.bullets.splice(j, 1);
+    // Wave Progression
+    if (room.enemies.length === 0) {
+      room.wave++;
+      if (room.wave % 5 === 0) {
+        room.state = 'CARD_SELECT';
+        players.forEach(p => p.hasPickedCard = false);
+        io.to(roomId).emit('showCards', getRandomCards());
+      } else {
+        spawnWave(room);
+        io.to(roomId).emit('waveAdvanced', room.wave);
+      }
     }
 
-    if (room.enemies.length === 0) { room.wave++; room.state = 'CARD_SELECT'; players.forEach(p=>p.hasPickedCard = false); io.to(roomId).emit('showCards', [...CARDS].sort(()=>0.5-Math.random()).slice(0,3)); }
-    io.to(roomId).emit('gameState', { players: room.players, enemies: room.enemies, bullets: room.bullets });
+    io.to(roomId).emit('gameState', {
+      players: room.players,
+      enemies: room.enemies,
+      bullets: room.bullets
+    });
   }
-}, 1000/TICK_RATE);
-server.listen(process.env.PORT || 3000);
+}, 1000 / TICK_RATE);
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log(`Shape Siege running on port ${PORT}`));
