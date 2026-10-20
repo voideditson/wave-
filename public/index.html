@@ -77,7 +77,7 @@
   <!-- Upgrade Card Picker -->
   <div class="overlay hidden" id="cardOverlay">
     <div style="text-align:center;">
-      <h1 style="color:#F59E0B">WAVE CLEARED! CHOOSE UPGRADE</h1>
+      <h1 id="upgradeTitle" style="color:#F59E0B">WAVE CLEARED! CHOOSE UPGRADE</h1>
       <div class="cards-container" id="cardsBox"></div>
     </div>
   </div>
@@ -94,7 +94,7 @@
   <!-- Game HUD -->
   <div id="hud" class="hidden">
     <div class="team-ui" id="teamUI"></div>
-    <div class="wave-ui"><h2>WAVE <span id="waveDisp">1</span></h2></div>
+    <div class="wave-ui"><h2 id="waveHeader">WAVE <span id="waveDisp">1</span></h2></div>
     <canvas id="minimap" width="200" height="200"></canvas>
     
     <div class="spectate-ui hidden" id="spectateUI">
@@ -121,7 +121,7 @@
     let state = { players: {}, enemies: [], bullets: [] };
 
     // Inputs
-    let keys = { w:false, a:false, s:false, d:false, shift:false };
+    let keys = { w:false, a:false, s:false, d:false, shift:false, e:false };
     let mouse = { x: window.innerWidth/2, y: window.innerHeight/2, down: false };
     
     // Spectator
@@ -163,14 +163,21 @@
     });
 
     socket.on('gameState', (data) => { state = data; updateUI(); });
-    socket.on('waveAdvanced', (wave) => document.getElementById('waveDisp').innerText = wave);
+    socket.on('waveAdvanced', (wave) => {
+      document.getElementById('waveDisp').innerText = wave;
+      document.getElementById('waveHeader').style.color = (wave % 5 === 0) ? '#EF4444' : '#F59E0B';
+    });
+
     socket.on('resumeWave', (wave) => {
       document.getElementById('cardOverlay').classList.add('hidden');
       document.getElementById('waveDisp').innerText = wave;
+      document.getElementById('waveHeader').style.color = (wave % 5 === 0) ? '#EF4444' : '#F59E0B';
     });
     
-    socket.on('showCards', (cards) => {
+    socket.on('showCards', (data) => {
+      const cards = data.cards;
       const box = document.getElementById('cardsBox');
+      document.getElementById('upgradeTitle').innerText = data.wasBoss ? "BOSS DEFEATED! TEAM BUFFED + CHOOSE UPGRADE" : "WAVE CLEARED! CHOOSE UPGRADE";
       box.innerHTML = cards.map(c => `
         <div class="upgrade-card" onclick="pickCard('${c.id}')">
           <div class="uc-title">${c.name}</div>
@@ -203,7 +210,7 @@
       if (keys.w) dy -= 1; if (keys.s) dy += 1;
       if (keys.a) dx -= 1; if (keys.d) dx += 1;
       const angle = Math.atan2(mouse.y - canvas.height/2, mouse.x - canvas.width/2);
-      socket.emit('playerInput', { roomId, dx, dy, angle, isShooting: mouse.down, isSprinting: keys.shift });
+      socket.emit('playerInput', { roomId, dx, dy, angle, isShooting: mouse.down, isSprinting: keys.shift, isReviving: keys.e });
     }, 1000 / 30);
 
     // --- SPECTATOR ---
@@ -219,7 +226,6 @@
       const me = state.players[myId];
       if (!me) return;
 
-      // Handle Spectator View
       const specUI = document.getElementById('spectateUI');
       if (me.dead) {
         specUI.classList.remove('hidden');
@@ -230,12 +236,12 @@
         spectatingId = myId;
       }
 
-      // Team HP Bars
+      // Team Status Side Bars
       document.getElementById('teamUI').innerHTML = Object.values(state.players).map(p => {
-        const hpPct = (p.hp / p.maxHp) * 100;
+        const hpPct = Math.max(0, (p.hp / p.maxHp) * 100);
         let status = '';
         if (p.dead) status = '<span class="knocked-text">DEAD</span>';
-        else if (p.knocked) status = `<span class="knocked-text">KNOCKED (${Math.ceil(p.deathTimer/20)}s)</span>`;
+        else if (p.knocked) status = `<span class="knocked-text">DOWNED (${Math.ceil(p.deathTimer/20)}s)</span>`;
         return `
           <div class="team-member">
             <div class="tm-name"><span>${p.name}</span> ${status}</div>
@@ -245,11 +251,14 @@
         `;
       }).join('');
 
-      // Minimap
+      // Minimap Rendering
       mCtx.clearRect(0, 0, 200, 200);
       const s = 200 / worldSize;
       mCtx.fillStyle = 'rgba(56,189,248,0.2)'; mapObstacles.forEach(o => mCtx.fillRect(o.x*s, o.y*s, o.w*s, o.h*s));
-      state.enemies.forEach(e => { mCtx.fillStyle = '#EF4444'; mCtx.beginPath(); mCtx.arc(e.x*s, e.y*s, 2, 0, Math.PI*2); mCtx.fill(); });
+      state.enemies.forEach(e => {
+        mCtx.fillStyle = e.type === 'BOSS' ? '#A855F7' : '#EF4444';
+        mCtx.beginPath(); mCtx.arc(e.x*s, e.y*s, e.type === 'BOSS' ? 5 : 2, 0, Math.PI*2); mCtx.fill();
+      });
       Object.values(state.players).forEach(p => {
         if(p.dead) return;
         mCtx.fillStyle = p.id === myId ? '#FFF' : '#10B981';
@@ -267,38 +276,52 @@
       const camX = target.x - canvas.width / 2;
       const camY = target.y - canvas.height / 2;
 
-      // Draw Grid
+      // Grid Pattern
       ctx.strokeStyle = '#1E293B'; ctx.lineWidth = 2;
       for(let x = -camX % 100; x < canvas.width; x+=100) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,canvas.height); ctx.stroke(); }
       for(let y = -camY % 100; y < canvas.height; y+=100) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(canvas.width,y); ctx.stroke(); }
 
-      // Map Bounds & Obstacles
+      // Map Borders & Obstacles
       ctx.strokeStyle = '#38BDF8'; ctx.lineWidth = 5; ctx.strokeRect(-camX, -camY, worldSize, worldSize);
       mapObstacles.forEach(o => { ctx.fillStyle = o.color; ctx.fillRect(o.x - camX, o.y - camY, o.w, o.h); });
 
-      // Draw Bullets
+      // Bullets
       state.bullets.forEach(b => {
         ctx.fillStyle = b.color; ctx.beginPath(); ctx.arc(b.x - camX, b.y - camY, 4, 0, Math.PI*2); ctx.fill();
       });
 
-      // Draw Enemies (Shapes)
+      // Enemies (Multiple Shapes & Boss)
       state.enemies.forEach(e => {
         ctx.save(); ctx.translate(e.x - camX, e.y - camY);
-        ctx.fillStyle = e.type === 'TANK' ? '#F59E0B' : '#EF4444';
-        
-        if (e.type === 'TANK') { // Hexagon
+
+        if (e.type === 'BOSS') { // Massive Skull / Octagon Boss Shape
+          ctx.fillStyle = '#A855F7';
+          ctx.beginPath();
+          for(let i=0; i<8; i++) { ctx.lineTo(e.size*Math.cos(i*Math.PI/4), e.size*Math.sin(i*Math.PI/4)); }
+          ctx.closePath(); ctx.fill();
+        } else if (e.type === 'HEXAGON') { // Heavy Tank
+          ctx.fillStyle = '#F59E0B';
           ctx.beginPath(); for(let i=0; i<6; i++) { ctx.lineTo(e.size*Math.cos(i*Math.PI/3), e.size*Math.sin(i*Math.PI/3)); } ctx.closePath(); ctx.fill();
-        } else { // Triangle
+        } else if (e.type === 'PENTAGON') { // Medium Chaser
+          ctx.fillStyle = '#10B981';
+          ctx.beginPath(); for(let i=0; i<5; i++) { ctx.lineTo(e.size*Math.cos(i*Math.PI/2.5), e.size*Math.sin(i*Math.PI/2.5)); } ctx.closePath(); ctx.fill();
+        } else if (e.type === 'CIRCLE') { // Fast Speeder
+          ctx.fillStyle = '#EC4899';
+          ctx.beginPath(); ctx.arc(0, 0, e.size, 0, Math.PI*2); ctx.fill();
+        } else { // Standard Triangle
+          ctx.fillStyle = '#EF4444';
           ctx.rotate(Math.atan2(target.y - e.y, target.x - e.x));
           ctx.beginPath(); ctx.moveTo(e.size, 0); ctx.lineTo(-e.size, e.size); ctx.lineTo(-e.size, -e.size); ctx.closePath(); ctx.fill();
         }
+
         // Enemy HP Bar
-        ctx.fillStyle = '#000'; ctx.fillRect(-15, -e.size - 10, 30, 4);
-        ctx.fillStyle = '#EF4444'; ctx.fillRect(-15, -e.size - 10, 30 * (e.hp/e.maxHp), 4);
+        ctx.fillStyle = '#000'; ctx.fillRect(-20, -e.size - 12, 40, 5);
+        ctx.fillStyle = e.type === 'BOSS' ? '#A855F7' : '#EF4444'; 
+        ctx.fillRect(-20, -e.size - 12, Math.max(0, 40 * (e.hp/e.maxHp)), 5);
         ctx.restore();
       });
 
-      // Draw Players (Squares)
+      // Players
       Object.values(state.players).forEach(p => {
         if(p.dead) return;
         ctx.save(); ctx.translate(p.x - camX, p.y - camY);
@@ -306,21 +329,24 @@
         if (p.knocked) {
           ctx.fillStyle = '#EF4444'; ctx.globalAlpha = 0.5 + Math.sin(Date.now()/200)*0.5;
           ctx.fillRect(-15, -15, 30, 30); ctx.globalAlpha = 1;
+
+          // Revive Prompt Overlay
+          ctx.fillStyle = '#FFF'; ctx.font = '16px Teko'; ctx.textAlign = 'center';
+          ctx.fillText("HOLD [E] TO REVIVE", 0, -25);
         } else {
           ctx.rotate(p.angle);
           ctx.fillStyle = p.id === myId ? '#38BDF8' : '#10B981';
           ctx.fillRect(-15, -15, 30, 30);
-          // Gun barrel
-          ctx.fillStyle = '#FFF'; ctx.fillRect(15, -3, 15, 6);
+          ctx.fillStyle = '#FFF'; ctx.fillRect(15, -3, 15, 6); // Gun barrel
         }
         ctx.restore();
         
-        // Name & Sprint Bar over head
+        // Name and Stamina Bar
         if (!p.knocked) {
           ctx.fillStyle = '#FFF'; ctx.font = '20px Teko'; ctx.textAlign = 'center'; ctx.fillText(p.name, p.x - camX, p.y - camY - 25);
           if (p.id === myId) {
              ctx.fillStyle = '#334155'; ctx.fillRect(p.x - camX - 20, p.y - camY + 20, 40, 5);
-             ctx.fillStyle = '#F59E0B'; ctx.fillRect(p.x - camX - 20, p.y - camY + 20, 40 * (p.sprint/p.maxSprint), 5);
+             ctx.fillStyle = '#F59E0B'; ctx.fillRect(p.x - camX - 20, p.y - camY + 20, Math.max(0, 40 * (p.sprint/p.maxSprint)), 5);
           }
         }
       });
