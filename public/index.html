@@ -23,7 +23,6 @@
     /* HUD */
     #hud { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
     
-    /* Team UI */
     .team-ui { position: absolute; top: 1rem; left: 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
     .team-member { background: rgba(15, 23, 42, 0.8); padding: 0.5rem 1rem; border-radius: 0.5rem; border-left: 4px solid #38BDF8; width: 250px; }
     .tm-name { font-size: 1.2rem; font-weight: bold; display: flex; justify-content: space-between; }
@@ -31,19 +30,15 @@
     .tm-hp { background: #10B981; height: 100%; transition: 0.2s; }
     .knocked-text { color: #EF4444; font-size: 1rem; font-weight: bold; }
 
-    /* Wave UI */
     .wave-ui { position: absolute; top: 1rem; left: 50%; transform: translateX(-50%); text-align: center; background: rgba(15,23,42,0.8); padding: 0.5rem 2rem; border-radius: 0.5rem; border-bottom: 4px solid #F59E0B; }
     .wave-ui h2 { font-size: 2.5rem; margin: 0; line-height: 1; color: #F59E0B; }
 
-    /* Minimap */
     #minimap { position: absolute; top: 1rem; right: 1rem; width: 200px; height: 200px; background: rgba(15,23,42,0.8); border: 2px solid #334155; border-radius: 0.5rem; }
 
-    /* Spectator UI */
     .spectate-ui { position: absolute; bottom: 2rem; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 1rem; pointer-events: auto; }
     .spec-btn { background: #1E293B; border: 2px solid #38BDF8; color: #38BDF8; padding: 0.5rem 1rem; cursor: pointer; border-radius: 0.5rem; font-size: 1.5rem; }
     .spec-name { font-size: 2rem; font-weight: bold; background: rgba(0,0,0,0.5); padding: 0 1rem; border-radius: 0.5rem; }
 
-    /* Cards Overlay */
     .cards-container { display: flex; gap: 1rem; justify-content: center; margin-top: 2rem; }
     .upgrade-card { background: #1E293B; border: 2px solid #38BDF8; padding: 1.5rem; border-radius: 0.5rem; cursor: pointer; width: 200px; transition: 0.2s; pointer-events: auto; }
     .upgrade-card:hover { transform: translateY(-10px); background: #334155; }
@@ -119,6 +114,7 @@
     let worldSize = 3000;
     let mapObstacles = [];
     let state = { players: {}, enemies: [], bullets: [], enemyBullets: [], telegraphs: [] };
+    let damageNumbers = []; // Client-side damage popups array
 
     let keys = { w:false, a:false, s:false, d:false, shift:false, e:false };
     let mouse = { x: window.innerWidth/2, y: window.innerHeight/2, down: false };
@@ -153,6 +149,7 @@
     socket.on('gameStarted', (data) => {
       mapObstacles = data.map;
       worldSize = data.worldSize;
+      damageNumbers = [];
       document.getElementById('lobby').classList.add('hidden');
       document.getElementById('gameOver').classList.add('hidden');
       document.getElementById('hud').classList.remove('hidden');
@@ -186,6 +183,18 @@
         `;
       }).join('');
       document.getElementById('cardOverlay').classList.remove('hidden');
+    });
+
+    // Floating Fortnite Damage Popup Handler
+    socket.on('damagePop', (data) => {
+      damageNumbers.push({
+        x: data.x + (Math.random() * 20 - 10),
+        y: data.y - 10,
+        dmg: data.dmg,
+        isCrit: data.isCrit,
+        life: 1.0,
+        scale: data.isCrit ? 1.4 : 1.0
+      });
     });
 
     socket.on('gameOver', (wave) => {
@@ -248,6 +257,7 @@
         `;
       }).join('');
 
+      // Render Minimap
       mCtx.clearRect(0, 0, 200, 200);
       const s = 200 / worldSize;
       mCtx.fillStyle = 'rgba(56,189,248,0.2)'; mapObstacles.forEach(o => mCtx.fillRect(o.x*s, o.y*s, o.w*s, o.h*s));
@@ -272,16 +282,22 @@
       const camX = target.x - canvas.width / 2;
       const camY = target.y - canvas.height / 2;
 
-      // Draw Grid
+      // Single-path Batched Grid Line Drawing (Drastic GPU Optimization)
       ctx.strokeStyle = '#1E293B'; ctx.lineWidth = 2;
-      for(let x = -camX % 100; x < canvas.width; x+=100) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,canvas.height); ctx.stroke(); }
-      for(let y = -camY % 100; y < canvas.height; y+=100) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(canvas.width,y); ctx.stroke(); }
+      ctx.beginPath();
+      for(let x = -camX % 100; x < canvas.width; x+=100) { ctx.moveTo(x,0); ctx.lineTo(x,canvas.height); }
+      for(let y = -camY % 100; y < canvas.height; y+=100) { ctx.moveTo(0,y); ctx.lineTo(canvas.width,y); }
+      ctx.stroke();
 
-      // Map Borders & Obstacles
+      // Map Borders & Obstacles (View-Cull Check)
       ctx.strokeStyle = '#38BDF8'; ctx.lineWidth = 5; ctx.strokeRect(-camX, -camY, worldSize, worldSize);
-      mapObstacles.forEach(o => { ctx.fillStyle = o.color; ctx.fillRect(o.x - camX, o.y - camY, o.w, o.h); });
+      mapObstacles.forEach(o => {
+        if (o.x - camX + o.w > 0 && o.x - camX < canvas.width && o.y - camY + o.h > 0 && o.y - camY < canvas.height) {
+          ctx.fillStyle = o.color; ctx.fillRect(o.x - camX, o.y - camY, o.w, o.h);
+        }
+      });
 
-      // Draw Boss Attack Telegraphs (Danger Zones)
+      // Boss Attack Danger Zones
       if (state.telegraphs) {
         state.telegraphs.forEach(t => {
           ctx.save();
@@ -294,20 +310,25 @@
         });
       }
 
-      // Player Bullets
+      // Bullets (View-Culled)
       state.bullets.forEach(b => {
-        ctx.fillStyle = b.color; ctx.beginPath(); ctx.arc(b.x - camX, b.y - camY, 4, 0, Math.PI*2); ctx.fill();
+        if (b.x - camX > -10 && b.x - camX < canvas.width + 10 && b.y - camY > -10 && b.y - camY < canvas.height + 10) {
+          ctx.fillStyle = b.color; ctx.beginPath(); ctx.arc(b.x - camX, b.y - camY, 4, 0, Math.PI*2); ctx.fill();
+        }
       });
 
-      // Enemy Bullets
       if (state.enemyBullets) {
         state.enemyBullets.forEach(eb => {
-          ctx.fillStyle = '#F43F5E'; ctx.beginPath(); ctx.arc(eb.x - camX, eb.y - camY, 6, 0, Math.PI*2); ctx.fill();
+          if (eb.x - camX > -10 && eb.x - camX < canvas.width + 10 && eb.y - camY > -10 && eb.y - camY < canvas.height + 10) {
+            ctx.fillStyle = '#F43F5E'; ctx.beginPath(); ctx.arc(eb.x - camX, eb.y - camY, 6, 0, Math.PI*2); ctx.fill();
+          }
         });
       }
 
-      // Enemies
+      // Enemies (View-Culled)
       state.enemies.forEach(e => {
+        if (e.x - camX < -50 || e.x - camX > canvas.width + 50 || e.y - camY < -50 || e.y - camY > canvas.height + 50) return;
+
         ctx.save(); ctx.translate(e.x - camX, e.y - camY);
 
         if (e.type === 'BOSS') {
@@ -317,7 +338,7 @@
         } else if (e.type === 'HEXAGON') {
           ctx.fillStyle = '#F59E0B';
           ctx.beginPath(); for(let i=0; i<6; i++) { ctx.lineTo(e.size*Math.cos(i*Math.PI/3), e.size*Math.sin(i*Math.PI/3)); } ctx.closePath(); ctx.fill();
-        } else if (e.type === 'PENTAGON') { // Shooter Enemy
+        } else if (e.type === 'PENTAGON') {
           ctx.fillStyle = '#10B981';
           ctx.beginPath(); for(let i=0; i<5; i++) { ctx.lineTo(e.size*Math.cos(i*Math.PI/2.5), e.size*Math.sin(i*Math.PI/2.5)); } ctx.closePath(); ctx.fill();
         } else if (e.type === 'CIRCLE') {
@@ -329,14 +350,36 @@
           ctx.beginPath(); ctx.moveTo(e.size, 0); ctx.lineTo(-e.size, e.size); ctx.lineTo(-e.size, -e.size); ctx.closePath(); ctx.fill();
         }
 
-        // HP Bar
+        // Enemy HP Bar
         ctx.fillStyle = '#000'; ctx.fillRect(-20, -e.size - 12, 40, 5);
         ctx.fillStyle = e.type === 'BOSS' ? '#A855F7' : '#EF4444'; 
         ctx.fillRect(-20, -e.size - 12, Math.max(0, 40 * (e.hp/e.maxHp)), 5);
         ctx.restore();
       });
 
-      // Players
+      // Floating Fortnite Damage Indicators
+      for (let i = damageNumbers.length - 1; i >= 0; i--) {
+        let d = damageNumbers[i];
+        d.y -= 0.8;
+        d.life -= 0.025;
+
+        if (d.life <= 0) {
+          damageNumbers.splice(i, 1);
+          continue;
+        }
+
+        ctx.save();
+        ctx.font = `bold ${Math.round(24 * d.scale)}px Teko`;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = d.isCrit ? `rgba(251, 191, 36, ${d.life})` : `rgba(255, 255, 255, ${d.life})`;
+        ctx.strokeStyle = `rgba(0, 0, 0, ${d.life})`;
+        ctx.lineWidth = 3;
+        ctx.strokeText(d.dmg, d.x - camX, d.y - camY);
+        ctx.fillText(d.dmg, d.x - camX, d.y - camY);
+        ctx.restore();
+      }
+
+      // Players Render
       Object.values(state.players).forEach(p => {
         if(p.dead) return;
         ctx.save(); ctx.translate(p.x - camX, p.y - camY);
