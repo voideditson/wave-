@@ -119,7 +119,7 @@ body{background:var(--bg);color:var(--ink);font-family:var(--body);-webkit-user-
 #wxBar{position:absolute;top:calc(max(14px,env(safe-area-inset-top,0px)) + 44px);left:50%;transform:translateX(-50%);display:flex;gap:8px;flex-wrap:wrap;justify-content:center;max-width:62vw;pointer-events:none}
 .wx{padding:5px 12px;border-radius:999px;background:var(--panel);border:2px solid var(--c,#fff);font-size:12px;font-weight:700;color:var(--ink);white-space:nowrap}
 .wx i{font-style:normal;color:var(--c,#fff);margin-right:6px;font-family:var(--display);font-weight:400}
-#prChip,#emChip,#chChip,#hubChip{pointer-events:auto;cursor:pointer}
+#prChip,#emChip,#chChip,#hubChip,#resetChip{pointer-events:auto;cursor:pointer}
 #prChip.hot{border-color:#ff9a3d;box-shadow:0 0 14px rgba(255,154,61,.55);animation:pulse2 .8s ease-in-out infinite alternate}
 @keyframes pulse2{to{transform:scale(1.05)}}
 #chatBox{position:absolute;left:50%;bottom:max(64px,calc(env(safe-area-inset-bottom,0px) + 52px));transform:translateX(-50%);width:min(420px,86vw);pointer-events:auto;z-index:40}
@@ -192,6 +192,7 @@ body{background:var(--bg);color:var(--ink);font-family:var(--body);-webkit-user-
       <button class="slot" id="adminChip" type="button" hidden><b>P</b><span>Admin</span></button>
       <button class="slot" id="prChip" type="button"><b>R</b><span>Prestige</span></button>
       <button class="slot" id="emChip" type="button"><b>B</b><span>Emotes</span></button>
+      <button class="slot" id="resetChip" type="button"><b>T</b><span>Reset</span></button>
       <button class="slot" id="hubChip" type="button"><b>G</b><span>Hub</span></button>
       <button class="slot" id="chChip" type="button"><b>Enter</b><span>Chat</span></button>
       <button class="slot" id="laserChip" type="button"><b>L</b><span>Laser $2.5K</span></button>
@@ -213,6 +214,7 @@ body{background:var(--bg);color:var(--ink);font-family:var(--body);-webkit-user-
       <div class="logo"><span>BRAINROT</span><span>HEIST</span></div>
       <p class="tag">Buy odd little creatures off the carpet, then raid other players' bases for more. Bought creatures walk home on their own, so fight to keep them (or buy them off someone). Everyone starts with a bat. Up to 8 players per server.</p>
       <div class="opts panel">
+        <div class="opt"><span>Password</span><input id="pwIn" type="password" maxlength="64" placeholder="Game password" autocomplete="off" spellcheck="false"></div>
         <div class="opt"><span>Name</span><input id="nameIn" type="text" maxlength="14" placeholder="Your name" autocomplete="off" spellcheck="false"></div>
         <div class="opt"><span>Graphics</span>
           <div class="seg" id="segGfx"><button type="button" data-v="high">High</button><button type="button" data-v="low">Low</button></div></div>
@@ -261,7 +263,7 @@ body{background:var(--bg);color:var(--ink);font-family:var(--body);-webkit-user-
     <div class="adm panel" id="adPanel" hidden>
       <h3>ADMIN ABUSE PANEL</h3>
       <div class="adtabs" id="adTabs">
-        <button type="button" data-tab="bc" class="on">Message</button><button type="button" data-tab="sp">Spawn</button><button type="button" data-tab="pl">Players</button><button type="button" data-tab="wx">Weather and luck</button><button type="button" data-tab="dg">Danger</button>
+        <button type="button" data-tab="bc" class="on">Message</button><button type="button" data-tab="sp">Spawn</button><button type="button" data-tab="pl">Players</button><button type="button" data-tab="wx">Weather and luck</button><button type="button" data-tab="pw">Password</button><button type="button" data-tab="dg">Danger</button>
       </div>
       <div class="tab" data-tab="bc">
         <label for="adText">Global message (shows on everyone's screen)</label>
@@ -287,13 +289,20 @@ body{background:var(--bg);color:var(--ink);font-family:var(--body);-webkit-user-
         <div class="row wrap"><button class="ghost" id="adClear" type="button">Clear their base</button><button class="danger" id="adKick" type="button">Kick</button></div>
       </div>
       <div class="tab" data-tab="wx" hidden>
-        <label>Weather mutations (any number can be on at once)</label>
+        <label>Weather mutations (any number can be on at once). Combo buttons turn on the two events they need.</label>
         <div class="row wrap" id="adWx"></div>
         <div class="row wrap"><button class="tg" id="adAuto" type="button">Automatic cycle: ON</button><button class="ghost tg" id="adWxOff" type="button">Turn everything off</button></div>
         <div class="stat" id="adWxStat"></div>
         <label>Luck boost (5 minutes, better brainrots spawn)</label>
         <div class="row wrap" id="adLuck"></div>
         <div class="stat" id="adLuckStat"></div>
+      </div>
+      <div class="tab" data-tab="pw" hidden>
+        <label>Game password (what people type on the PLAY screen)</label>
+        <div class="row"><input id="adPw1" type="password" placeholder="New password" autocomplete="off" maxlength="32"></div>
+        <div class="row"><input id="adPw2" type="password" placeholder="Type it again to confirm" autocomplete="off" maxlength="32"></div>
+        <div class="row wrap"><button id="adPwSet" type="button">Change password</button><button class="ghost" id="adPwShow" type="button">Show current password</button></div>
+        <div class="stat">The two boxes must match, so a typo can't lock everyone out. You can always look up the current password here. Players already in the game are not kicked.</div>
       </div>
       <div class="tab" data-tab="dg" hidden>
         <label>Danger zone</label>
@@ -2621,9 +2630,10 @@ function toggleLaser(){
   send({t:'laser'});
 }
 function setLaser(i,ms){
+  if(!(ms>0)&&player.laserOk===i)player.laserOk=-1;
   var b=bases[i];if(!b)return;
   b.laserEnd=ms>0?T+ms/1000:0;b.laserG.visible=ms>0;
-  if(ms>0&&joined&&i===player.idx)feed('Laser barrier ON for '+Math.round(ms/1000)+' seconds. Nobody else can get in.','#7dff6a');
+  if(ms>0&&joined&&i===player.idx)feed('Laser barrier ON for '+Math.round(ms/1000)+' seconds. Nobody can get in, and anyone already inside is locked in.','#7dff6a');
   else if(ms>0&&joined)feed((b.ownerName||'Someone')+' turned their laser barrier on.','#ff6b8b');
 }
 /* the gun is for show: bullets are only drawn, they never touch anyone */
@@ -2860,6 +2870,7 @@ window.addEventListener('keydown',function(e){
   if(e.code==='Digit2'&&!e.repeat)toggleFly();
   if(e.code==='Digit3'&&!e.repeat)setTool(2);
   if(e.code==='KeyL'&&!e.repeat)toggleLaser();
+  if(e.code==='KeyT'&&!e.repeat)doReset();
   if(e.code==='KeyF'&&!e.repeat)doAction();
   if(e.code==='KeyB'&&!e.repeat)toggleWheel();
   if(e.code==='Enter'&&!e.repeat){e.preventDefault();openChat()}
@@ -3029,6 +3040,12 @@ function collide(a){
     for(var bi=0;bi<bases.length;bi++){
       var lb=bases[bi];if(lb===a.base||lb.laserEnd<=T)continue;
       var lr=lb.rect,pd=AR;
+      if(a.laserOk===bi){
+        /* locked in: the barrier is a cage until it switches off */
+        var ex=a.x<lr.minX+pd?lr.minX+pd:(a.x>lr.maxX-pd?lr.maxX-pd:a.x),ez2=a.z<lr.minZ+pd?lr.minZ+pd:(a.z>lr.maxZ-pd?lr.maxZ-pd:a.z);
+        if(ex!==a.x||ez2!==a.z){a.x=ex;a.z=ez2;a.vx=a.vz=0;if(T>laserWarnT){laserWarnT=T+1.2;SFX.deny();fx('LOCKED IN. Press T to reset','#ff4f6e',a.x,a.y+5,a.z,40)}}
+        continue;
+      }
       if(a.x>lr.minX-pd&&a.x<lr.maxX+pd&&a.z>lr.minZ-pd&&a.z<lr.maxZ+pd){
         var d1=a.x-(lr.minX-pd),d2=(lr.maxX+pd)-a.x,d3=a.z-(lr.minZ-pd),d4=(lr.maxZ+pd)-a.z,mn=Math.min(d1,d2,d3,d4);
         if(mn===d1)a.x=lr.minX-pd;else if(mn===d2)a.x=lr.maxX+pd;else if(mn===d3)a.z=lr.minZ-pd;else a.z=lr.maxZ+pd;
@@ -3582,11 +3599,20 @@ function onFuseRes(m){
   SFX.home();feed('Fused into '+(m.mut?MUT[m.mut].pre+' ':'')+SP[m.sp].n+'!','#ff9a2a');hubSel=[];  renderHub();
 }
 setInterval(function(){if(hubOpen&&hubTab==='spin')updateSpinBtn()},500);
+/* reset: get unstuck by going home after 5 seconds */
+var resetEnd=0,resetChip=$('resetChip');
+function doReset(){if(!joined)return;if(resetEnd>T){feed('Already on your way back.','#ffb02e');return}send({t:'reset'})}
+chipClick(resetChip,doReset);
+setInterval(function(){
+  var l=resetEnd-T;
+  resetChip.lastChild.textContent=l>0?('Home in '+Math.ceil(l)+'s'):'Reset';
+  resetChip.classList.toggle('on',l>0);
+},200);
 
 /* ============================== START / LOOP ============================== */
 /* ============================== NETWORK ============================== */
 var ws=null,netUp=false,joining=false,online=0,maxP=8,myPid=-1,sendT=0,NAMEK='brainrotHeist.name';
-var netMsg=$('netMsg'),menuMsg=$('menuMsg'),playBtn=$('play'),nameIn=$('nameIn'),lbEl=$('lb');
+var pwIn=$('pwIn'),netMsg=$('netMsg'),menuMsg=$('menuMsg'),playBtn=$('play'),nameIn=$('nameIn'),lbEl=$('lb');
 try{var sn=localStorage.getItem(NAMEK);if(sn)nameIn.value=sn}catch(e){}
 function r2(v){return Math.round(v*100)/100}
 function send(o){if(ws&&ws.readyState===1)ws.send(JSON.stringify(o))}
@@ -3692,11 +3718,13 @@ $('adWipe').addEventListener('click',function(){
   if(T<wipeArm){wipeArm=0;b.textContent="Wipe everyone's bases";send({t:'adminWipe'});adminSay('Wiped every base.')}
   else{wipeArm=T+4;b.textContent='Click again to confirm';setTimeout(function(){if(T>=wipeArm)b.textContent="Wipe everyone's bases"},4200)}
 });
+$('adPwSet').addEventListener('click',function(){var a=$('adPw1').value,b=$('adPw2').value;if(!a||a!==b){adminSay('The two passwords do not match. Nothing was changed.',1);return}send({t:'adminPw',pw:a,pw2:b});$('adPw1').value='';$('adPw2').value=''});
+$('adPwShow').addEventListener('click',function(){send({t:'adminPwShow'})});
 $('adRag').addEventListener('click',function(){send({t:'adminRagdoll'})});
 (function(){
   for(var i=1;i<MUT.length;i++)(function(i){
     var b=document.createElement('button');b.type='button';b.className='tg ghost';b.setAttribute('data-m',i);b.style.setProperty('--c',MUT[i].cs);
-    var d=document.createElement('i');b.appendChild(d);b.appendChild(document.createTextNode(MUT[i].n+' x'+MUT[i].m));
+    var d=document.createElement('i');b.appendChild(d);b.appendChild(document.createTextNode(MUT[i].n+' x'+MUT[i].m+(MUT[i].combo?' (combo: '+MUT[MUT[i].parts[0]].n+' + '+MUT[MUT[i].parts[1]].n+')':'')));
     b.addEventListener('click',function(){send({t:'adminWeather',m:i})});$('adWx').appendChild(b);
   })(i);
   BH.LUCKS.forEach(function(L){var b=document.createElement('button');b.type='button';b.className='tg';b.textContent=L+'x luck';b.addEventListener('click',function(){send({t:'adminLuck',mult:L})});$('adLuck').appendChild(b)});
@@ -3713,7 +3741,7 @@ function applyAdminState(m){
     if(keep&&Array.prototype.some.call(adPl.options,function(z){return z.value===keep}))adPl.value=keep;
   }
   var act=m.weather.active.map(function(a){return a.m});
-  Array.prototype.forEach.call($('adWx').querySelectorAll('button'),function(b){var on=act.indexOf(parseInt(b.getAttribute('data-m'),10))>=0;b.classList.toggle('on',on)});
+  Array.prototype.forEach.call($('adWx').querySelectorAll('button'),function(b){var bm=parseInt(b.getAttribute('data-m'),10),on=MUT[bm].combo?(act.indexOf(MUT[bm].parts[0])>=0&&act.indexOf(MUT[bm].parts[1])>=0):act.indexOf(bm)>=0;b.classList.toggle('on',on)});
   $('adAuto').textContent='Automatic cycle: '+(m.weather.auto?'ON':'OFF');$('adAuto').classList.toggle('on',m.weather.auto);
   $('adWxStat').textContent=(act.length?'Active now: '+m.weather.active.map(function(a){return MUT[a.m].n+(a.forced?' (admin)':' ('+mmssT(a.left/1000)+' left)')}).join(', '):'Nothing active.')+(m.weather.auto&&!act.length&&m.weather.next?' Next one in '+mmssT(m.weather.next/1000)+'.':'');
   $('adLuckStat').textContent=m.luck.ms>0?'Luck x'+m.luck.mult+' running, '+mmssT(m.luck.ms/1000)+' left.':'No luck boost running.';
@@ -3823,7 +3851,13 @@ function onNet(m){
     case 'fly':{var rf=remotes[m.pid];if(rf){rf.fly=!!m.on;if(m.on)rf.tool=0}if(m.pid===myPid){player.fly=!!m.on;syncToolUI()}break}
     case 'swing':{var rs=remotes[m.pid];if(rs&&rs.tool===1&&!(rs.rag>0))rs.swingA=0;break}
     case 'shot':{var rh=remotes[m.pid];if(rh){shootBullet(rh.x,rh.y,rh.z,m.dx,m.dy,m.dz);rh.kick=1;rh.tyaw=Math.atan2(m.dx,m.dz)}break}
-    case 'laser':setLaser(m.base,m.ms);break;
+    case 'laser':{
+      var lbb=bases[m.base];
+      if(m.ms>0&&joined&&lbb&&lbb!==player.base){var r0=lbb.rect;if(player.x>r0.minX&&player.x<r0.maxX&&player.z>r0.minZ&&player.z<r0.maxZ)player.laserOk=m.base}
+      if(!(m.ms>0)&&player.laserOk===m.base)player.laserOk=-1;
+      setLaser(m.base,m.ms);break}
+    case 'tp':player.x=m.x;player.y=m.y;player.z=m.z;player.vx=player.vz=player.vy=0;player.yaw=player.vis=m.yaw;player.fly=false;player.lift=null;player.laserOk=-1;resetEnd=0;camInit=false;burst(m.x,m.y+2,m.z,30,0x9a50ff,6,6);syncToolUI();break;
+    case 'resetStart':resetEnd=T+m.ms/1000;feed('Heading back to your base in '+Math.round(m.ms/1000)+' seconds...','#b98cff');break;
     case 'collected':
       if(m.v>0){SFX.cash();fx('+'+fmt(m.v),'#7dff6a',player.x,player.y+5,player.z,60);feed('Collected '+fmt(m.v)+' from all your pads.','#7dff6a');player.base.slots.forEach(function(s){s.cash=0;s.colT=T})}
       else feed('Nothing to collect yet.','#a4acd0');
@@ -3831,6 +3865,11 @@ function onNet(m){
     case 'nameTaken':
       joining=false;playBtn.disabled=false;
       menuMsg.textContent='The name "'+m.name+'" is already in use right now. Pick a different one.';
+      break;
+    case 'badpw':
+      joining=false;playBtn.disabled=false;
+      menuMsg.textContent=m.wait?'Too many wrong tries. Wait 15 seconds and try again.':'Wrong password. Ask the host for the game password.';
+      try{pwIn.select()}catch(e){}
       break;
     case 'dupe':
       joining=false;playBtn.disabled=false;
@@ -3885,8 +3924,11 @@ playBtn.addEventListener('click',function(){
   audioInit();joining=true;playBtn.disabled=true;menuMsg.textContent='';
   var nm=(nameIn.value||'').trim();
   try{localStorage.setItem(NAMEK,nm)}catch(e){}
-  send({t:'hello',name:nm,save:readSave(),did:deviceId()});
+  var pw=pwIn.value;try{localStorage.setItem('brainrotHeist.pw',pw)}catch(e){}
+  send({t:'hello',name:nm,pw:pw,save:readSave(),did:deviceId()});
 });
+try{var spw=localStorage.getItem('brainrotHeist.pw');if(spw)pwIn.value=spw}catch(e){}
+pwIn.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();playBtn.click()}});
 nameIn.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();playBtn.click()}});
 connect();
 var last=performance.now();
