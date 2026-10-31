@@ -1,0 +1,47 @@
+HOSTING BRAINROT HEIST ON YOUR OWN COMPUTER
+===========================================
+
+The server is the "node server.js" program. It also serves the game page, so
+anyone who can reach your computer's address can play in a normal browser.
+Nothing here depends on Render or any outside website any more.
+
+1. ONE-TIME SETUP
+   - Install Node.js (the LTS version) from https://nodejs.org
+   - Unzip this folder somewhere, like your Desktop.
+
+2. START THE GAME (Windows)
+   - Double click start-game.bat
+   - Wait for "Brainrot Heist listening on 3000"
+   - On your own computer open http://localhost:3000
+   - Game password starts as 000. The admin password is the same as before.
+   - Leave the black window open. Closing it stops the game.
+   (Mac or Linux: run ./start-game.sh in a terminal.)
+
+3. LETTING PEOPLE AT SCHOOL IN
+   Your home computer is behind your router, so school computers can't reach
+   it directly. Easiest fix is a free Cloudflare quick tunnel, no account:
+   - Download cloudflared from https://github.com/cloudflare/cloudflared/releases
+     (Windows: cloudflared-windows-amd64.exe). Rename it to cloudflared.exe and
+     put it in C:\Windows\System32, or in this folder.
+   - With the game running, double click start-tunnel.bat
+   - It prints a link like https://random-words.trycloudflare.com
+   - Send that link to your friends. It changes every time you restart it.
+   Warning: schools often block tunnel sites too. If trycloudflare.com is blocked
+   on the school wifi, test it from a school laptop first. Other options if it is:
+     * ngrok (ngrok.com, free account) with: ngrok http 3000
+     * playit.gg, which gives a fixed address
+     * Port forwarding on your home router, then use your public IP
+   Each of these may or may not be blocked by your school filter. There is no
+   way to be sure until you try from a school laptop.
+
+4. FRIENDS AT HOME ON THE SAME WIFI
+   Run "ipconfig" and find your IPv4 address (like 192.168.1.23). They open
+   http://192.168.1.23:3000. If it does not load, allow Node.js through the
+   Windows Firewall when it asks.
+
+5. GOOD TO KNOW
+   - The game only runs while your computer is on and the window is open.
+   - Saves live in the server's memory plus each player's browser, so
+     restarting the server keeps browser saves but loses server copies.
+   - Change the game password inside the game: Admin panel, Password tab.
+   - To use another port: set PORT=3001 in start-game.bat.
